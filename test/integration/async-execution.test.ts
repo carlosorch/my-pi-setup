@@ -133,6 +133,17 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 	return resultPath;
 }
 
+function readLastMockPiArgs(mockPi: MockPi): string[] {
+	const callFile = fs.readdirSync(mockPi.dir)
+		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+		.sort()
+		.at(-1);
+	assert.ok(callFile, "expected a recorded mock pi call");
+	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
+	assert.ok(Array.isArray(payload.args), "expected recorded args");
+	return payload.args;
+}
+
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
 	let mockPi: MockPi;
@@ -682,6 +693,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.output ?? "", /Output saved to:/);
 		assert.doesNotMatch(payload.results[0]?.output ?? "", /async full output/);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
+	});
+
+	it("background single runs treat string false as disabled output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "async inline report" });
+		const id = `async-string-false-output-${Date.now().toString(36)}`;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { output: "default-report.md" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: "false",
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, "async inline report");
+		assert.doesNotMatch(payload.summary ?? "", /Output saved to:/);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "default-report.md")), false);
+		assert.doesNotMatch(readLastMockPiArgs(mockPi).at(-1) ?? "", /Write your findings to:/);
 	});
 
 	it("background runs detect hidden tool failures even when the child exits 0", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

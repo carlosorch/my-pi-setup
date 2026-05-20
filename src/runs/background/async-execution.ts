@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { applyThinkingSuffix } from "../shared/pi-args.ts";
-import { injectSingleOutputInstruction, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
@@ -126,7 +126,7 @@ interface AsyncSingleParams {
 	sessionRoot?: string;
 	sessionFile?: string;
 	skills?: string[];
-	output?: string | false;
+	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
 	modelOverride?: string;
 	availableModels?: AvailableModelInfo[];
@@ -524,7 +524,8 @@ export function executeAsyncSingle(
 		};
 	}
 
-	const outputPath = resolveSingleOutputPath(params.output, ctx.cwd, runnerCwd);
+	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
+	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);

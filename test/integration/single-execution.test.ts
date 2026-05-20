@@ -21,6 +21,7 @@ import {
 	removeTempDir,
 	makeAgentConfigs,
 	makeAgent,
+	makeMinimalCtx,
 	events,
 	tryImport,
 } from "../support/helpers.ts";
@@ -91,12 +92,20 @@ interface UtilsModule {
 	getFinalOutput(messages: unknown[]): string;
 }
 
+interface ExecutorModule {
+	createSubagentExecutor?: (...args: unknown[]) => {
+		execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }>;
+	};
+}
+
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
+const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
 const available = !!(execution && utils);
 
 const runSync = execution?.runSync;
 const getFinalOutput = utils?.getFinalOutput;
+const createSubagentExecutor = executorMod?.createSubagentExecutor;
 
 function writePackageSkill(packageRoot: string, skillName: string): void {
 	const skillDir = path.join(packageRoot, "skills", skillName);
@@ -144,6 +153,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
 		assert.ok(Array.isArray(payload.args), "expected recorded args");
 		return payload.args;
+	}
+
+	function makeExecutor(agents = [makeAgent("echo")]) {
+		return createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+		});
 	}
 
 	it("spawns agent and captures output", async () => {
@@ -853,6 +875,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.finalOutput, "fresh assistant output");
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
+	});
+
+	it("treats string false as disabled output in foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "inline report" });
+		const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);
+
+		const result = await executor.execute(
+			"single-string-false-output",
+			{ agent: "echo", task: "Write report", output: "false" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /inline report/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Output saved to:/);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "default-report.md")), false);
+		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /Write your findings to:/);
 	});
 
 	it("rejects file-only mode without an output path before spawning", async () => {
