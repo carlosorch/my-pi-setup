@@ -407,6 +407,50 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(result.details.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 
+	it("foreground chains inherit the parent session model when no step or agent model is set", async () => {
+		mockPi.onCall({ output: "Step ran" });
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "worker", task: "Do work" }],
+				[makeAgent("worker")],
+				{
+					ctx: {
+						...makeMinimalCtx(tempDir),
+						model: { provider: "deepseek", id: "deepseek-v4-flash" },
+					},
+				},
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const args = readCallArgs(0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+		assert.equal(result.details.results[0].model, "deepseek/deepseek-v4-flash");
+	});
+
+	it("foreground chains treat the inherit model sentinel as the parent session model", async () => {
+		mockPi.onCall({ output: "Step ran" });
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "worker", task: "Do work", model: "inherit" }],
+				[makeAgent("worker")],
+				{
+					ctx: {
+						...makeMinimalCtx(tempDir),
+						model: { provider: "deepseek", id: "deepseek-v4-flash" },
+					},
+				},
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const args = readCallArgs(0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+		assert.equal(result.details.results[0].model, "deepseek/deepseek-v4-flash");
+	});
+
 	it("suppresses progress for {task} chain templates when the top-level task is review-only", async () => {
 		mockPi.onCall({ output: "Review done" });
 		const agents = [makeAgent("reviewer", { defaultProgress: true })];

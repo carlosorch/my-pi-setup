@@ -59,7 +59,7 @@ import {
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
-import { resolveModelCandidate } from "../shared/model-fallback.ts";
+import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
@@ -232,9 +232,12 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			taskStr = prefix + taskStr + suffix;
 
 			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
-			const effectiveModel =
-				(task.model ? resolveModelCandidate(task.model, input.availableModels, input.ctx.model?.provider) : null)
-				?? resolveModelCandidate(taskAgentConfig?.model, input.availableModels, input.ctx.model?.provider);
+			const effectiveModel = resolveSubagentModelOverride(
+				task.model ?? taskAgentConfig?.model,
+				input.ctx.model,
+				input.availableModels,
+				input.ctx.model?.provider,
+			);
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(input.maxSubagentDepth, taskAgentConfig?.maxSubagentDepth);
 
 			const taskCwd = input.worktreeSetup
@@ -1016,10 +1019,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const cleanTask = stepTask;
 			stepTask = prefix + stepTask + suffix;
 
-			const effectiveModel =
-				tuiOverride?.model
-				?? (seqStep.model ? resolveModelCandidate(seqStep.model, availableModels, ctx.model?.provider) : null)
-				?? resolveModelCandidate(agentConfig.model, availableModels, ctx.model?.provider);
+			const effectiveModel = tuiOverride?.model
+				?? resolveSubagentModelOverride(
+					seqStep.model ?? agentConfig.model,
+					ctx.model,
+					availableModels,
+					ctx.model?.provider,
+				);
 
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
