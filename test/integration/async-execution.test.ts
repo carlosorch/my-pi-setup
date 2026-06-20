@@ -2064,6 +2064,69 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("background event logs drop noisy message updates and cap child diagnostics", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const previousMaxBytes = process.env.PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES;
+		process.env.PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES = "900";
+		try {
+			mockPi.onCall({
+				steps: [
+					{
+						jsonl: [
+							{
+								type: "message_update",
+								assistantMessageEvent: {
+									type: "thinking_delta",
+									delta: "NOISY_PARTIAL_DELTA",
+									partial: { role: "assistant", content: [{ type: "text", text: "NOISY_PARTIAL_SNAPSHOT".repeat(200) }] },
+								},
+								message: { role: "assistant", content: [{ type: "text", text: "NOISY_PARTIAL_MESSAGE".repeat(200) }] },
+							},
+							events.toolStart("bash", { command: `echo ${"BIG_COMMAND_PAYLOAD".repeat(200)}` }),
+							events.assistantMessage("Done after noisy stream"),
+						],
+					},
+				],
+			});
+
+			const id = `async-noisy-events-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const sessionRoot = path.join(tempDir, "sessions");
+
+			executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Stream noisy diagnostics",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot,
+				maxSubagentDepth: 2,
+			});
+
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.output, "Done after noisy stream");
+
+			const eventsText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+			assert.doesNotMatch(eventsText, /"type":"message_update"/);
+			assert.doesNotMatch(eventsText, /NOISY_PARTIAL_/);
+			assert.doesNotMatch(eventsText, /BIG_COMMAND_PAYLOAD/);
+			assert.match(eventsText, /"type":"subagent\.events\.truncated"/);
+			assert.match(eventsText, /"droppedEventType":"tool_execution_start"/);
+		} finally {
+			if (previousMaxBytes === undefined) delete process.env.PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES;
+			else process.env.PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES = previousMaxBytes;
+		}
+	});
+
 	it("background runs stream child events and live output while active", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

@@ -48,9 +48,14 @@ function isNotFoundError(error: unknown): boolean {
 		&& (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-function appendJsonl(filePath: string, payload: object): void {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf-8");
+function appendJsonlBestEffort(filePath: string, payload: object): void {
+	try {
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf-8");
+	} catch {
+		// Repair status/result writes are the important path. A broken or full
+		// diagnostic event log must not make stale-run reconciliation fail.
+	}
 }
 
 function readStatusFile(asyncDir: string): AsyncStatus | null {
@@ -223,7 +228,7 @@ function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: st
 	const repair = buildFailedRepair(status, asyncDir, now, reason);
 	writeAtomicJson(resultPath, repair.result);
 	writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
-	appendJsonl(path.join(asyncDir, "events.jsonl"), {
+	appendJsonlBestEffort(path.join(asyncDir, "events.jsonl"), {
 		type: "subagent.run.repaired_stale",
 		ts: now,
 		runId: repair.status.runId,

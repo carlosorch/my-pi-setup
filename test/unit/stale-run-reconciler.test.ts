@@ -71,6 +71,39 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("keeps stale repair successful when the event log cannot be appended", () => {
+		const root = tempRoot("pi-stale-event-log-collision-");
+		try {
+			const asyncDir = path.join(root, "run-dead-events-dir");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-dead-events-dir",
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			fs.mkdirSync(path.join(asyncDir, "events.jsonl"));
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, true);
+			assert.equal(result.status?.state, "failed");
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "failed");
+			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-events-dir.json"), "utf-8")).success, false);
+			assert.equal(fs.statSync(path.join(asyncDir, "events.jsonl")).isDirectory(), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("repairs stale status with per-child result outcomes", () => {
 		const root = tempRoot("pi-stale-mixed-result-");
 		try {
