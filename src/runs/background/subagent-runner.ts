@@ -78,6 +78,8 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, formatAcceptancePrompt, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
+import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -601,6 +603,30 @@ async function runSingleStep(
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 }> {
+	if (step.importAsyncRoot) {
+		const imported = await waitForImportedAsyncRoot(step.importAsyncRoot);
+		try {
+			fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
+		} catch {
+			// Output files are observability only for imported roots.
+		}
+		return {
+			agent: imported.agent,
+			output: imported.output,
+			exitCode: imported.exitCode,
+			error: imported.error,
+			sessionFile: imported.sessionFile,
+			intercomTarget: imported.intercomTarget,
+			model: imported.model,
+			attemptedModels: imported.attemptedModels,
+			modelAttempts: imported.modelAttempts,
+			structuredOutput: imported.structuredOutput,
+			structuredOutputPath: imported.structuredOutputPath,
+			structuredOutputSchemaPath: imported.structuredOutputSchemaPath,
+			acceptance: imported.acceptance,
+		};
+	}
+
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
 		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
 		: undefined);
@@ -660,6 +686,7 @@ async function runSingleStep(
 			inheritSkills: step.inheritSkills,
 			tools: step.tools,
 			extensions: step.extensions,
+			subagentOnlyExtensions: step.subagentOnlyExtensions,
 			systemPrompt: step.systemPrompt,
 			systemPromptMode: step.systemPromptMode,
 			mcpDirectTools: step.mcpDirectTools,
@@ -1112,6 +1139,45 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		writeAtomicJson(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
 	};
+	const consumePendingAppendRequests = (): void => {
+		if (statusPayload.mode !== "chain" || statusPayload.state !== "running") return;
+		const requests = consumeChainAppendRequests(asyncDir);
+		if (requests.length === 0) {
+			const pendingAppends = countPendingChainAppendRequests(asyncDir);
+			if ((statusPayload.pendingAppends ?? 0) !== pendingAppends) {
+				statusPayload.pendingAppends = pendingAppends;
+				statusPayload.lastUpdate = Date.now();
+				writeStatusPayload();
+			}
+			return;
+		}
+		const appendedSteps = requests.flatMap((request) => request.steps);
+		steps.push(...appendedSteps);
+		const now = Date.now();
+		const pendingAppends = countPendingChainAppendRequests(asyncDir);
+		const added = appendRunnerStepsToStatus({
+			status: statusPayload,
+			steps: appendedSteps,
+			now,
+			pendingAppends,
+		});
+		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
+		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
+		if (config.childIntercomTargets) {
+			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
+		}
+		writeStatusPayload();
+		for (const request of requests) {
+			appendJsonl(eventsPath, JSON.stringify({
+				type: "subagent.chain.append.accepted",
+				ts: now,
+				runId: id,
+				requestId: request.id,
+				stepCount: request.steps.length,
+				pendingAppends,
+			}));
+		}
+	};
 	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
 		const groupNode = statusPayload.workflowGraph?.nodes.find((node) => node.id === `step-${stepIndex}`);
 		if (!groupNode) return;
@@ -1403,10 +1469,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	);
 
 	let flatIndex = 0;
+	let stepCursor = 0;
 
-	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+	while (true) {
 		if (interrupted) break;
-		const step = steps[stepIndex];
+		consumePendingAppendRequests();
+		if (stepCursor >= steps.length) break;
+		const stepIndex = stepCursor++;
+		const step = steps[stepIndex]!;
 
 		if (isDynamicRunnerGroup(step)) {
 			const groupStartFlatIndex = flatIndex;
@@ -1835,7 +1905,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							outputs,
 							sessionDir: taskSessionDir,
 							artifactsDir, artifactConfig, id,
-							flatIndex: fi, flatStepCount: flatSteps.length,
+							flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 							outputFile: path.join(asyncDir, `output-${fi}.log`),
 							piPackageRoot: config.piPackageRoot,
 							piArgv1: config.piArgv1,
@@ -2000,7 +2070,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				outputs,
 				sessionDir: config.sessionDir,
 				artifactsDir, artifactConfig, id,
-				flatIndex, flatStepCount: flatSteps.length,
+				flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
 				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
 				piPackageRoot: config.piPackageRoot,
 				piArgv1: config.piArgv1,
@@ -2131,11 +2201,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	}
 
 	const resultMode = config.resultMode ?? statusPayload.mode;
-	const agentName = flatSteps.length === 1
-		? flatSteps[0].agent
+	const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
+	const agentName = finalFlatAgents.length === 1
+		? finalFlatAgents[0]!
 		: resultMode === "parallel"
-			? `parallel:${flatSteps.map((s) => s.agent).join("+")}`
-			: `chain:${flatSteps.map((s) => s.agent).join("->")}`;
+			? `parallel:${finalFlatAgents.join("+")}`
+			: `chain:${finalFlatAgents.join("->")}`;
 	let sessionFile: string | undefined;
 	let shareUrl: string | undefined;
 	let gistUrl: string | undefined;

@@ -56,6 +56,7 @@ export interface AsyncRunSummary {
 	endedAt?: number;
 	currentStep?: number;
 	chainStepCount?: number;
+	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	steps: AsyncRunStepSummary[];
 	sessionDir?: string;
@@ -188,6 +189,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		endedAt: status.endedAt,
 		currentStep: status.currentStep,
 		...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
+		...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
 		...(parallelGroups.length ? { parallelGroups } : {}),
 		steps: summarizedSteps,
 		...(nestedChildren.length ? { nestedChildren } : {}),
@@ -309,7 +311,8 @@ function formatRunHeader(run: AsyncRunSummary): string {
 	const stepLabel = formatAsyncRunProgressLabel(run);
 	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
 	const activity = formatActivityFacts(run);
-	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel} | ${cwd}`;
+	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
+	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
 }
 
 export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {

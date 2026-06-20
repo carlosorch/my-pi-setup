@@ -101,7 +101,7 @@ interface ChainExecutionResult {
 		chainAgents?: string[];
 		totalSteps?: number;
 		workflowGraph?: {
-			nodes: Array<{ kind?: string; outputName?: string; status?: string; error?: string; acceptanceStatus?: string; children?: Array<{ itemKey?: string; label?: string; status?: string; acceptanceStatus?: string }> }>;
+			nodes: Array<{ kind?: string; agent?: string; flatIndex?: number; outputName?: string; status?: string; error?: string; acceptanceStatus?: string; children?: Array<{ itemKey?: string; label?: string; status?: string; acceptanceStatus?: string }> }>;
 		};
 		currentStepIndex?: number;
 		outputs?: Record<string, { text: string; structured?: unknown }>;
@@ -405,6 +405,50 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.results[0].model, "github-copilot/gpt-5-mini");
 		assert.deepEqual(result.details.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
+	});
+
+	it("foreground chains inherit the parent session model when no step or agent model is set", async () => {
+		mockPi.onCall({ output: "Step ran" });
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "worker", task: "Do work" }],
+				[makeAgent("worker")],
+				{
+					ctx: {
+						...makeMinimalCtx(tempDir),
+						model: { provider: "deepseek", id: "deepseek-v4-flash" },
+					},
+				},
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const args = readCallArgs(0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+		assert.equal(result.details.results[0].model, "deepseek/deepseek-v4-flash");
+	});
+
+	it("foreground chains treat the inherit model sentinel as the parent session model", async () => {
+		mockPi.onCall({ output: "Step ran" });
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "worker", task: "Do work", model: "inherit" }],
+				[makeAgent("worker")],
+				{
+					ctx: {
+						...makeMinimalCtx(tempDir),
+						model: { provider: "deepseek", id: "deepseek-v4-flash" },
+					},
+				},
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const args = readCallArgs(0);
+		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+		assert.equal(result.details.results[0].model, "deepseek/deepseek-v4-flash");
 	});
 
 	it("suppresses progress for {task} chain templates when the top-level task is review-only", async () => {
@@ -850,6 +894,39 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.ok(result.details.results.every((r) => r.exitCode === 0));
 	});
 
+	it("runs a 40-step alternating worker and reviewer chain", async () => {
+		const chainLength = 40;
+		for (let i = 0; i < chainLength; i++) {
+			mockPi.onCall({ output: `step-${i}-output` });
+		}
+		const chain = Array.from({ length: chainLength }, (_, i): TestSequentialStep => ({
+			agent: i % 2 === 0 ? "worker" : "reviewer",
+			...(i === 0 ? { task: "Start long worker/reviewer chain" } : {}),
+		}));
+		const agents = [makeAgent("worker"), makeAgent("reviewer")];
+
+		const result = await executeChain(makeChainParams(chain, agents));
+
+		assert.ok(!result.isError, `long chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.equal(mockPi.callCount(), chainLength);
+		assert.equal(result.details.results.length, chainLength);
+		assert.equal(result.details.totalSteps, chainLength);
+		assert.equal(result.details.chainAgents?.length, chainLength);
+		assert.equal(result.details.workflowGraph?.nodes.length, chainLength);
+		assert.equal(result.details.workflowGraph?.nodes.at(-1)?.agent, "reviewer");
+		assert.equal(result.details.workflowGraph?.nodes.at(-1)?.flatIndex, chainLength - 1);
+		assert.ok(result.details.results.every((r) => r.exitCode === 0));
+		assert.deepEqual(
+			result.details.results.map((r) => r.agent),
+			chain.map((step) => step.agent),
+		);
+
+		const finalTaskArg = readCallArgs(chainLength - 1).at(-1) ?? "";
+		assert.match(finalTaskArg, /step-38-output/);
+		assert.doesNotMatch(finalTaskArg, /step-37-output/);
+		assert.match(result.content[0]?.text ?? "", /40 steps/);
+	});
+
 	it("returns error for unknown agent in chain", async () => {
 		const agents = [makeAgent("scout")];
 
@@ -997,6 +1074,17 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
 	}
 
+	function readCallArgsMatching(text: string): string[] {
+		const callFiles = fs.readdirSync(mockPi.dir)
+			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.sort();
+		for (const callFile of callFiles) {
+			const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
+			if (args.join("\n").includes(text)) return args;
+		}
+		assert.fail(`expected recorded call containing ${text}`);
+	}
+
 	it("runs parallel tasks within a chain step", async () => {
 		mockPi.onCall({ output: "Parallel task done" });
 		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
@@ -1052,8 +1140,8 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	});
 
 	it("passes completed parallel task outputs to later {outputs.name} references", async () => {
-		mockPi.onCall({ output: "Alpha named output" });
-		mockPi.onCall({ output: "Beta named output" });
+		mockPi.onCall({ matchArgIncludes: "Alpha", output: "Alpha named output" });
+		mockPi.onCall({ matchArgIncludes: "Beta", output: "Beta named output" });
 		mockPi.onCall({ output: "Final" });
 		const agents = [makeAgent("alpha"), makeAgent("beta"), makeAgent("writer")];
 
@@ -1076,6 +1164,52 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		const finalTask = readCallArgs(2).at(-1) ?? "";
 		assert.match(finalTask, /Alpha named output/);
 		assert.match(finalTask, /Beta named output/);
+	});
+
+	it("funnels an initial parallel step through one agent, then fans the funnel output back out", async () => {
+		mockPi.onCall({ matchArgIncludes: "Scout API", output: "Scout A findings" });
+		mockPi.onCall({ matchArgIncludes: "Scout UI", output: "Scout B findings" });
+		mockPi.onCall({ matchArgIncludes: "Synthesize:", output: "Funnel synthesis" });
+		mockPi.onCall({ matchArgIncludes: "Review funnel A:", output: "Reviewer A done" });
+		mockPi.onCall({ matchArgIncludes: "Review funnel B:", output: "Reviewer B done" });
+		const agents = [makeAgent("scout-a"), makeAgent("scout-b"), makeAgent("synthesizer"), makeAgent("review-a"), makeAgent("review-b")];
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{
+						parallel: [
+							{ agent: "scout-a", task: "Scout API" },
+							{ agent: "scout-b", task: "Scout UI" },
+						],
+					},
+					{ agent: "synthesizer", task: "Synthesize:\n{previous}" },
+					{
+						parallel: [
+							{ agent: "review-a", task: "Review funnel A:\n{previous}" },
+							{ agent: "review-b", task: "Review funnel B:\n{previous}" },
+						],
+					},
+				],
+				agents,
+			),
+		);
+
+		assert.ok(!result.isError, `should succeed: ${JSON.stringify(result.content)}`);
+		assert.deepEqual(result.details.results.map((entry) => entry.agent), ["scout-a", "scout-b", "synthesizer", "review-a", "review-b"]);
+		assert.equal(result.details.totalSteps, 3);
+		const funnelTask = readCallArgsMatching("Synthesize:").at(-1) ?? "";
+		assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
+		assert.match(funnelTask, /Scout A findings/);
+		assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
+		assert.match(funnelTask, /Scout B findings/);
+		const fanoutTaskA = readCallArgsMatching("Review funnel A:").at(-1) ?? "";
+		const fanoutTaskB = readCallArgsMatching("Review funnel B:").at(-1) ?? "";
+		assert.match(fanoutTaskA, /Review funnel A:\nFunnel synthesis/);
+		assert.match(fanoutTaskB, /Review funnel B:\nFunnel synthesis/);
+		assert.equal(result.details.workflowGraph?.nodes[0]?.kind, "parallel-group");
+		assert.equal(result.details.workflowGraph?.nodes[1]?.kind, "step");
+		assert.equal(result.details.workflowGraph?.nodes[2]?.kind, "parallel-group");
 	});
 
 	it("aggregates file-only parallel outputs as file references for the next step", async () => {

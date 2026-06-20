@@ -39,6 +39,7 @@ interface BuildPiArgsInput {
 	inheritSkills: boolean;
 	tools?: string[];
 	extensions?: string[];
+	subagentOnlyExtensions?: string[];
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
 	cwd?: string;
@@ -120,11 +121,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		: [PROMPT_RUNTIME_EXTENSION_PATH];
 	if (input.extensions !== undefined) {
 		args.push("--no-extensions");
-		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions])]) {
+		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions, ...(input.subagentOnlyExtensions ?? [])])]) {
 			args.push("--extension", extPath);
 		}
 	} else {
-		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths])]) {
+		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])])]) {
 			args.push("--extension", extPath);
 		}
 	}

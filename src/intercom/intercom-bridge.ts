@@ -17,6 +17,16 @@ function defaultIntercomExtensionDir(agentDir = defaultAgentDir()): string {
 	return path.join(agentDir, "extensions", PI_INTERCOM_PACKAGE_NAME);
 }
 
+export const INTERCOM_EXTENSION_DIR_ENV = "PI_INTERCOM_EXTENSION_DIR";
+
+// Launcher-provided override for the pi-intercom package directory. Lets a hermetic
+// wrapper point the subagent intercom bridge at a read-only install (e.g. a Nix-store
+// path) instead of seeding the package into the writable agent dir.
+function envIntercomExtensionDir(): string | undefined {
+	const dir = process.env[INTERCOM_EXTENSION_DIR_ENV]?.trim();
+	return dir ? dir : undefined;
+}
+
 function defaultIntercomConfigPath(agentDir = defaultAgentDir()): string {
 	return path.join(agentDir, "intercom", "config.json");
 }
@@ -224,7 +234,7 @@ function configuredPiIntercomPackageDir(input: ResolveIntercomBridgeInput, agent
 }
 
 function resolveIntercomExtensionDir(input: ResolveIntercomBridgeInput, agentDir: string): string {
-	const legacyDir = path.resolve(input.extensionDir ?? defaultIntercomExtensionDir(agentDir));
+	const legacyDir = path.resolve(input.extensionDir ?? envIntercomExtensionDir() ?? defaultIntercomExtensionDir(agentDir));
 	if (fs.existsSync(legacyDir)) return legacyDir;
 	return configuredPiIntercomPackageDir(input, agentDir) ?? legacyDir;
 }

@@ -19,11 +19,14 @@ import {
 import { serializeAgent } from "./agent-serializer.ts";
 import { serializeChain, serializeJsonChain } from "./chain-serializer.ts";
 import { discoverAvailableSkills } from "./skills.ts";
-import type { Details } from "../shared/types.ts";
+import {
+	buildProactiveSkillSubagentRecommendationLines,
+} from "./proactive-skills.ts";
+import type { Details, ExtensionConfig } from "../shared/types.ts";
 
 type ManagementAction = "list" | "get" | "create" | "update" | "delete";
 type ManagementScope = "user" | "project";
-type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry">;
+type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { config?: ExtensionConfig };
 
 interface ManagementParams {
 	action?: string;
@@ -78,8 +81,8 @@ function parsePackageConfig(value: unknown): { packageName?: string; error?: str
 	return parsePackageName(value, "config.package");
 }
 
-function allAgents(d: { builtin: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
-	return [...d.builtin, ...d.user, ...d.project];
+function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
+	return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
 function availableNames(cwd: string, kind: "agent" | "chain"): string[] {
@@ -114,6 +117,10 @@ function nameExistsInScope(cwd: string, scope: ManagementScope, name: string, ex
 		if (c.source === scope && c.name === name && c.filePath !== excludePath) return true;
 	}
 	return false;
+}
+
+function isMutableSource(source: AgentSource): source is ManagementScope {
+	return source === "user" || source === "project";
 }
 
 function unknownChainAgents(cwd: string, steps: ChainStepConfig[]): string[] {
@@ -269,6 +276,12 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (typeof cfg.extensions === "string") target.extensions = parseCsv(cfg.extensions);
 		else return "config.extensions must be a comma-separated string, empty string, or false when provided.";
 	}
+	if (hasKey(cfg, "subagentOnlyExtensions")) {
+		if (cfg.subagentOnlyExtensions === false) target.subagentOnlyExtensions = undefined;
+		else if (cfg.subagentOnlyExtensions === "") target.subagentOnlyExtensions = [];
+		else if (typeof cfg.subagentOnlyExtensions === "string") target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
+		else return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
+	}
 	if (hasKey(cfg, "thinking")) {
 		if (cfg.thinking === false || cfg.thinking === "") target.thinking = undefined;
 		else if (typeof cfg.thinking === "string") target.thinking = cfg.thinking.trim() || undefined;
@@ -327,10 +340,10 @@ function resolveTarget<T extends { source: AgentSource; filePath: string }>(
 	cwd: string,
 	scopeHint?: string,
 ): T | AgentToolResult<Details> {
-	const mutable = matches.filter((m) => m.source !== "builtin");
+	const mutable = matches.filter((m): m is T & { source: ManagementScope } => isMutableSource(m.source));
 	if (mutable.length === 0) {
 		if (matches.length > 0) {
-			return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' is builtin and cannot be modified. Create a same-named ${kind} in user or project scope to override it.`, true);
+			return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' is read-only and cannot be modified. Create a same-named ${kind} in user or project scope to override it.`, true);
 		}
 		const available = availableNames(cwd, kind);
 		return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' not found. Available: ${available.join(", ") || "none"}.`, true);
@@ -381,6 +394,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
+	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
@@ -442,10 +456,16 @@ function formatChainDetail(chain: ChainConfig): string {
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
-	const scopedAgents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
+	const scopedAgents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const agents = scopedAgents.filter((a) => !a.disabled);
-	const chains = d.chains.filter((c) => scope === "both" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
+	const chains = d.chains.filter((c) => scope === "both" || c.source === "package" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const diagnostics = d.chainDiagnostics.filter((entry) => scope === "both" || entry.source === scope);
+	const proactiveSuggestions = buildProactiveSkillSubagentRecommendationLines({
+		agents,
+		chains,
+		config: ctx.config?.proactiveSkillSubagents,
+		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
+	});
 	const lines = [
 		"Executable agents:",
 		...(agents.length
@@ -454,6 +474,7 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 		"",
 		"Chains:",
 		...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"]),
+		...(proactiveSuggestions.length ? ["", ...proactiveSuggestions] : []),
 		...(diagnostics.length ? ["", "Chain diagnostics:", ...diagnostics.map((entry) => `- ${entry.filePath}: ${entry.error}`)] : []),
 	];
 	return result(lines.join("\n"));

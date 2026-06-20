@@ -59,6 +59,7 @@ describe("builtin agent overrides", () => {
 						systemPromptMode: "replace",
 						inheritProjectContext: true,
 						inheritSkills: true,
+						subagentOnlyExtensions: ["./tools/child-review.ts"],
 						completionGuard: false,
 					},
 				},
@@ -73,6 +74,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.systemPromptMode, "replace");
 		assert.equal(reviewer.inheritProjectContext, true);
 		assert.equal(reviewer.inheritSkills, true);
+		assert.deepEqual(reviewer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
 		assert.equal(reviewer.completionGuard, false);
 		assert.equal(reviewer.override?.scope, "user");
 		assert.equal(reviewer.override?.path, path.join(tempHome, ".pi", "agent", "settings.json"));
@@ -238,6 +240,7 @@ describe("builtin agent overrides", () => {
 				skills: ["safe-bash"],
 				tools: ["bash"],
 				mcpDirectTools: ["xcodebuild_list_sims"],
+				subagentOnlyExtensions: ["./tools/base-child.ts"],
 				completionGuard: false,
 			},
 			{
@@ -252,6 +255,7 @@ describe("builtin agent overrides", () => {
 				skills: undefined,
 				tools: undefined,
 				mcpDirectTools: undefined,
+				subagentOnlyExtensions: undefined,
 				completionGuard: true,
 			},
 		);
@@ -265,6 +269,7 @@ describe("builtin agent overrides", () => {
 			defaultContext: false,
 			skills: false,
 			tools: false,
+			subagentOnlyExtensions: false,
 			completionGuard: true,
 		});
 	});

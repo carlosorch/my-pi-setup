@@ -242,10 +242,10 @@ export const SubagentParams = Type.Object({
 		description: "Management/control action. Omit for execution mode."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', or action='resume'."
+		description: "Run id or prefix for action='status', action='interrupt', action='resume', or action='append-step'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt' or action='resume'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='resume', or action='append-step'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status' or action='resume'."
@@ -262,7 +262,7 @@ export const SubagentParams = Type.Object({
 			{ type: "object", additionalProperties: true },
 			{ type: "string" },
 		],
-		description: "Agent or chain config for create/update. Agent: name, package (optional namespace; runtime name becomes package.name), description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext ('fresh'|'fork'), model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, package, description, scope, steps (array of {agent, task?, output?, outputMode?, reads?, model?, skill?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
+		description: "Agent or chain config for create/update. Agent: name, package (optional namespace; runtime name becomes package.name), description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext ('fresh'|'fork'), model, tools (comma-separated), extensions (comma-separated), subagentOnlyExtensions (comma-separated child-only extension paths), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, package, description, scope, steps (array of {agent, task?, output?, outputMode?, reads?, model?, skill?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
@@ -271,7 +271,7 @@ export const SubagentParams = Type.Object({
 			"Prevents filesystem conflicts. Requires clean git state. " +
 			"Per-worktree diffs included in output."
 	})),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: sequential pipeline where each step's response becomes {previous} for the next. Use {task}, {previous}, {chain_dir} in task templates." })),
+	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: sequential pipeline where each step's response becomes {previous} for the next. With action='append-step', provide exactly one step to append to an active async chain; it can use {previous}, {chain_dir}, and existing {outputs.name} references." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork"],
 		description: "'fresh' or 'fork' to branch from parent session. If omitted, any requested agent with defaultContext: 'fork' makes the whole invocation forked; otherwise the default is 'fresh'.",

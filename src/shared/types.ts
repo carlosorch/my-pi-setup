@@ -579,6 +579,7 @@ export interface AsyncStatus {
 	cwd?: string;
 	currentStep?: number;
 	chainStepCount?: number;
+	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: Array<{
@@ -815,6 +816,13 @@ interface ExtensionChainConfig {
 	};
 }
 
+export interface ProactiveSkillSubagentsConfig {
+	enabled?: boolean;
+	minReferences?: number;
+	maxRecommendations?: number;
+	preferredAgent?: string;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
@@ -826,6 +834,7 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	intercomBridge?: IntercomBridgeConfig;
+	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 }
 
 // ============================================================================
@@ -916,7 +925,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "create", "update", "delete", "status", "interrupt", "resume", "doctor"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "create", "update", "delete", "status", "interrupt", "resume", "append-step", "doctor"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

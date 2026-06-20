@@ -64,6 +64,18 @@ function pidGone(): never {
 	throw error;
 }
 
+async function waitForCondition(
+	condition: () => boolean,
+	description: string,
+	timeoutMs = 1000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!condition()) {
+		if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 function createUiContext() {
 	const widgets: unknown[] = [];
 	let renderRequests = 0;
@@ -314,7 +326,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.resetJobs(ui.ctx as never);
 			tracker.handleStarted({ id: "run-stale", asyncDir: runDir, agent: "worker" });
 
-			await new Promise((resolve) => setTimeout(resolve, 80));
+			await waitForCondition(() => state.asyncJobs.size === 0, "stale async job cleanup");
 
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ChainOutputValidationError, validateChainOutputBindings } from "../../src/runs/shared/chain-outputs.ts";
+import { ChainOutputValidationError, validateChainOutputBindings, validateChainOutputBindingsWithContext } from "../../src/runs/shared/chain-outputs.ts";
 import {
 	DynamicFanoutError,
 	collectDynamicResults,
@@ -136,6 +136,31 @@ describe("dynamic fanout helpers", () => {
 			() => validateChainOutputBindings([chain[1]!]),
 			/unknown output 'targets'/,
 		);
+	});
+
+	it("validates appended steps against prior and reserved output names", () => {
+		assert.doesNotThrow(() => validateChainOutputBindingsWithContext([
+			{ agent: "worker", task: "Use {outputs.targets}", as: "summary" },
+		], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }));
+		assert.throws(
+			() => validateChainOutputBindingsWithContext([
+				{ agent: "worker", task: "Use {outputs.missing}" },
+			], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }),
+			/Unknown chain output reference '\{outputs\.missing\}' at step 3/,
+		);
+		assert.throws(
+			() => validateChainOutputBindingsWithContext([
+				{ agent: "worker", task: "Use {previous}", as: "targets" },
+			], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }),
+			/Duplicate chain output name 'targets'/,
+		);
+		assert.doesNotThrow(() => validateChainOutputBindingsWithContext([
+			{
+				expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
+				parallel: { agent: "reviewer", task: "Review {item.path}" },
+				collect: { as: "reviews" },
+			},
+		], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }));
 	});
 
 	it("collects ordered child result records and validates aggregate schema", () => {

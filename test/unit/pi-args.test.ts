@@ -465,6 +465,25 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
 
+	it("loads subagent-only extension paths only through child process extension args", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read"],
+			extensions: ["./main-allowed-ext.ts"],
+			subagentOnlyExtensions: ["./child-tool.ts"],
+		});
+
+		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		assert.ok(args.includes("--no-extensions"));
+		assert.equal(args[args.indexOf("--tools") + 1], "read");
+		assert.ok(extensionArgs.includes("./main-allowed-ext.ts"));
+		assert.ok(extensionArgs.includes("./child-tool.ts"));
+	});
+
 	it("authorizes child fanout only from exact declared builtin subagent", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],

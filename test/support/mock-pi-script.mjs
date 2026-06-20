@@ -14,25 +14,67 @@ function listPendingFiles(dir) {
 		.sort();
 }
 
-function claimNextResponse(dir) {
+function readPendingResponse(filePath) {
+	try {
+		return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error) {
+			const code = error.code;
+			if (code === "ENOENT") return undefined;
+		}
+		throw error;
+	}
+}
+
+function hasArgMatcher(response) {
+	return Object.prototype.hasOwnProperty.call(response ?? {}, "matchArgIncludes");
+}
+
+function responseMatchesArgs(response, args) {
+	const matcher = response?.matchArgIncludes;
+	if (matcher === undefined) return true;
+	const needles = Array.isArray(matcher) ? matcher : [matcher];
+	if (needles.length === 0) return true;
+	const haystack = args.join("\n");
+	return needles.every((needle) => typeof needle === "string" && haystack.includes(needle));
+}
+
+function claimResponseFile(dir, fileName) {
+	const sourcePath = path.join(dir, fileName);
+	const targetPath = path.join(dir, fileName.replace(/^pending-/, "consumed-"));
+	try {
+		fs.renameSync(sourcePath, targetPath);
+		return JSON.parse(fs.readFileSync(targetPath, "utf-8"));
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error) {
+			const code = error.code;
+			if (code === "ENOENT" || code === "EEXIST" || code === "EPERM") return undefined;
+		}
+		throw error;
+	}
+}
+
+function claimNextResponse(dir, args) {
 	for (const fileName of listPendingFiles(dir)) {
 		const sourcePath = path.join(dir, fileName);
-		const targetPath = path.join(dir, fileName.replace(/^pending-/, "consumed-"));
-		try {
-			fs.renameSync(sourcePath, targetPath);
-			return JSON.parse(fs.readFileSync(targetPath, "utf-8"));
-		} catch (error) {
-			if (error && typeof error === "object" && "code" in error) {
-				const code = error.code;
-				if (code === "ENOENT" || code === "EEXIST") continue;
-			}
-			throw error;
-		}
+		const response = readPendingResponse(sourcePath);
+		if (!response || !hasArgMatcher(response) || !responseMatchesArgs(response, args)) continue;
+		const claimed = claimResponseFile(dir, fileName);
+		if (claimed) return claimed;
+	}
+
+	for (const fileName of listPendingFiles(dir)) {
+		const sourcePath = path.join(dir, fileName);
+		const response = readPendingResponse(sourcePath);
+		if (!response || hasArgMatcher(response)) continue;
+		const claimed = claimResponseFile(dir, fileName);
+		if (claimed) return claimed;
 	}
 
 	const defaultPath = path.join(dir, "default-response.json");
 	if (!fs.existsSync(defaultPath)) return undefined;
-	return JSON.parse(fs.readFileSync(defaultPath, "utf-8"));
+	const fallback = JSON.parse(fs.readFileSync(defaultPath, "utf-8"));
+	return responseMatchesArgs(fallback, args) ? fallback : undefined;
 }
 
 function defaultAssistantMessage(output) {
@@ -187,7 +229,7 @@ async function main() {
 
 	const args = process.argv.slice(2);
 	const jsonMode = isJsonMode(args);
-	const response = claimNextResponse(queueDir) ?? defaultResponse();
+	const response = claimNextResponse(queueDir, args) ?? defaultResponse();
 	writeSessionFile(args);
 	fs.writeFileSync(
 		path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`),
