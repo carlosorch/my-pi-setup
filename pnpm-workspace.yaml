@@ -1,0 +1,7 @@
+packages:
+  - extensions/subagents
+
+allowBuilds:
+  "@google/genai": false
+  koffi: false
+  protobufjs: false
