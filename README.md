@@ -57,7 +57,7 @@ The other Davis extensions and themes remain source references and are not loade
 Install a pinned release so later upstream changes cannot alter the active Pi unexpectedly:
 
 ```bash
-pi install git:github.com/carlosorch/my-pi-setup@setup-v0.1.2
+pi install git:github.com/carlosorch/my-pi-setup@setup-v0.1.3
 ```
 
 Move to a later pinned release by installing its new tag. To roll back, reinstall the previous tag. Do not keep `npm:pi-subagents` enabled at the same time because both packages register the same subagent extension.

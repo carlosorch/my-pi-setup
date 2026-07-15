@@ -19,7 +19,7 @@ const expected = {
 
 test("root manifest exposes only the integrated Pi resources", () => {
   assert.equal(pkg.name, "my-pi-setup");
-  assert.equal(pkg.version, "0.1.2");
+  assert.equal(pkg.version, "0.1.3");
   assert.equal(pkg.private, true);
   assert.deepEqual(pkg.keywords, ["pi-package"]);
   assert.deepEqual(pkg.pi, expected);

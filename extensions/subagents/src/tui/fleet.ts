@@ -214,6 +214,7 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 		return formatAsyncRunTranscript(status, item.run.asyncDir, { index: item.index, lines: TRANSCRIPT_LINES }).split("\n");
 	}
 	const outputPath = item.index !== undefined ? path.join(item.run.asyncDir, `output-${item.index}.log`) : undefined;
+	const stepSessionFile = item.step && "sessionFile" in item.step && typeof item.step.sessionFile === "string" ? item.step.sessionFile : undefined;
 	return [
 		`Run: ${item.runId}`,
 		"Source: async",
@@ -221,7 +222,7 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 		`Mode: ${item.run.mode}`,
 		item.index !== undefined ? `Child: ${item.index} (${item.agent})` : `Agent: ${item.agent}`,
 		outputPath ? `Output: ${outputPath}` : undefined,
-		item.step?.sessionFile ? `Session: ${item.step.sessionFile}` : item.run.sessionFile ? `Session: ${item.run.sessionFile}` : undefined,
+		stepSessionFile ? `Session: ${stepSessionFile}` : item.run.sessionFile ? `Session: ${item.run.sessionFile}` : undefined,
 		"",
 		"Transcript",
 		"(status is no longer available)",
