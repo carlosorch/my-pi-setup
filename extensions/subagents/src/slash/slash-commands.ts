@@ -37,6 +37,7 @@ import {
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
 	ASYNC_DIR,
+	type AcceptanceInput,
 	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
@@ -344,6 +345,8 @@ class SubagentsStopSelector implements Component {
 		this.done = done;
 	}
 
+	invalidate(): void {}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			this.done({ confirmed: false });
@@ -559,7 +562,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			...(step.label ? { label: step.label } : {}),
 			...(step.as ? { as: step.as } : {}),
 			...(outputSchema ? { outputSchema } : {}),
-			...((step as { acceptance?: unknown }).acceptance !== undefined ? { acceptance: (step as { acceptance?: unknown }).acceptance } : {}),
+			...(step.acceptance !== undefined ? { acceptance: step.acceptance } : {}),
 			output: step.output,
 			outputMode: step.outputMode,
 			reads: step.reads,
@@ -1082,15 +1085,15 @@ type ChainStepObject = {
 	cwd?: string;
 	count?: number;
 	outputSchema?: JsonSchemaObject;
-	acceptance?: string;
+	acceptance?: AcceptanceInput;
 };
 
-const INLINE_ACCEPTANCE_LEVELS = new Set(["auto", "attested", "checked"]);
+type InlineAcceptance = Extract<AcceptanceInput, string>;
 
-function validateInlineAcceptanceInput(value: string, agent: string): void {
+function validateInlineAcceptanceInput(value: string, agent: string): asserts value is InlineAcceptance {
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
-	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
+	if (value !== "auto" && value !== "attested" && value !== "checked") {
 		throw new SlashParseError(
 			`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none or verified acceptance contracts; reviewed is inferred-only.`,
 		);
