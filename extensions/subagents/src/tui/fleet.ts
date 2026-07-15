@@ -56,7 +56,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 		...(job.parallelGroups?.length ? { parallelGroups: job.parallelGroups } : {}),
 		steps: (job.steps ?? job.agents?.map((agent) => ({ agent, status: job.status === "queued" ? ("pending" as const) : job.status })) ?? []).map((step, index) => ({
 			...step,
-			index: step.index ?? index,
+			index: "index" in step && typeof step.index === "number" ? step.index : index,
 		})),
 		...(job.sessionDir ? { sessionDir: job.sessionDir } : {}),
 		...(job.outputFile ? { outputFile: job.outputFile } : {}),

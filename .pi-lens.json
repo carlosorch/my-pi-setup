@@ -1,0 +1,16 @@
+{
+  "ignore": [
+    "extensions/subagents/**",
+    "!extensions/subagents/src/runs/background/async-status.ts",
+    "!extensions/subagents/src/slash/slash-commands.ts",
+    "!extensions/subagents/src/tui/fleet.ts",
+    "!extensions/subagents/src/tui/render.ts",
+    "!extensions/subagents/src/tui/render-helpers.ts",
+    "!extensions/subagents/src/tui/takeover-adapter.ts",
+    "!extensions/subagents/src/tui/takeover.ts",
+    "!extensions/subagents/test/integration/render-fork-badge.test.ts",
+    "!extensions/subagents/test/unit/fleet.test.ts",
+    "!extensions/subagents/test/unit/render-helpers.test.ts",
+    "!extensions/subagents/test/unit/takeover.test.ts"
+  ]
+}

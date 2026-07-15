@@ -99,6 +99,8 @@ describe("native subagent fleet", () => {
 				"async:async-current:1",
 				"foreground-recent:foreground-recent:0",
 			]);
+			const asyncWorker = snapshot.items.find((item) => item.key === "async:async-current:0");
+			assert.equal(asyncWorker?.kind === "async" ? asyncWorker.step?.sessionFile : undefined, path.join(root, "async-current", "worker.jsonl"));
 			assert.equal(snapshot.error, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -134,6 +136,7 @@ describe("native subagent fleet", () => {
 		const snapshot = collectFleetSnapshot(state);
 		assert.equal(snapshot.items.length, 21);
 		assert.equal(snapshot.items[0]?.runId, "active-old");
+		assert.equal(snapshot.items[0]?.index, 0);
 		assert.equal(snapshot.items.find((item) => item.runId === "terminal-21")?.state, "complete");
 		assert.ok(!snapshot.items.some((item) => item.runId === "terminal-0"));
 	});
