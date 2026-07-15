@@ -77,8 +77,8 @@ function sanitizeAgentOptions(value: unknown): SandboxAgentOptions {
  * Execute orchestration code in a separate, permission-restricted Node process.
  * The child can only invoke the narrow agent/phase IPC protocol and is always
  * terminated on completion, cancellation, or protocol failure. The workflow
- * itself and its agent requests have no wall-clock deadline. Active requests
- * are aborted only when the workflow is cancelled or the sandbox is cleaned up.
+ * itself owns no timer; the trusted parent supplies one absolute deadline via
+ * its AbortSignal and aborts active requests during cancellation or cleanup.
  */
 export function runWorkflowSandbox(options: RunWorkflowSandboxOptions) {
   if (!process.allowedNodeEnvironmentFlags.has("--permission")) {

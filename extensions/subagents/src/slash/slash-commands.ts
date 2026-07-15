@@ -25,13 +25,9 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
-import {
-	applySlashUpdate,
-	buildSlashInitialResult,
-	failSlashResult,
-	finalizeSlashResult,
-	resolveSlashMessageDetails,
-} from "./slash-live-state.ts";
+import { TakeoverAdapter } from "../tui/takeover-adapter.ts";
+import { openSubagentTakeover } from "../tui/takeover.ts";
+import { applySlashUpdate, buildSlashInitialResult, failSlashResult, finalizeSlashResult, resolveSlashMessageDetails } from "./slash-live-state.ts";
 import {
 	SLASH_RESULT_TYPE,
 	SLASH_TEXT_RESULT_TYPE,
@@ -77,19 +73,48 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 		const key = trimmed.slice(0, eq).trim();
 		const val = trimmed.slice(eq + 1).trim();
 		switch (key) {
-			case "output": config.output = val === "false" ? false : val; break;
-			case "outputMode": if (val === "inline" || val === "file-only") config.outputMode = val; break;
-			case "reads": config.reads = val === "false" ? false : val.split("+").filter(Boolean); break;
-			case "model": config.model = val || undefined; break;
-			case "skill": case "skills": config.skill = val === "false" ? false : val.split("+").filter(Boolean); break;
-			case "progress": config.progress = val !== "false"; break;
-			case "as": config.as = val || undefined; break;
-			case "label": config.label = val || undefined; break;
-			case "phase": config.phase = val || undefined; break;
-			case "cwd": config.cwd = val || undefined; break;
-			case "count": { const n = Number(val); if (Number.isInteger(n) && n > 0) config.count = n; break; }
-			case "outputSchema": config.outputSchema = val || undefined; break;
-			case "acceptance": config.acceptance = val || undefined; break;
+			case "output":
+				config.output = val === "false" ? false : val;
+				break;
+			case "outputMode":
+				if (val === "inline" || val === "file-only") config.outputMode = val;
+				break;
+			case "reads":
+				config.reads = val === "false" ? false : val.split("+").filter(Boolean);
+				break;
+			case "model":
+				config.model = val || undefined;
+				break;
+			case "skill":
+			case "skills":
+				config.skill = val === "false" ? false : val.split("+").filter(Boolean);
+				break;
+			case "progress":
+				config.progress = val !== "false";
+				break;
+			case "as":
+				config.as = val || undefined;
+				break;
+			case "label":
+				config.label = val || undefined;
+				break;
+			case "phase":
+				config.phase = val || undefined;
+				break;
+			case "cwd":
+				config.cwd = val || undefined;
+				break;
+			case "count": {
+				const n = Number(val);
+				if (Number.isInteger(n) && n > 0) config.count = n;
+				break;
+			}
+			case "outputSchema":
+				config.outputSchema = val || undefined;
+				break;
+			case "acceptance":
+				config.acceptance = val || undefined;
+				break;
 		}
 	}
 	return config;
@@ -137,26 +162,39 @@ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (pre
 	// group), so it must not restart agent completion — otherwise `scout -- do x | wr` would
 	// wrongly resume suggesting agents past the `--` task. Quotes are tracked so separators
 	// inside a task are ignored.
-	let inSingle = false, inDouble = false, depth = 0, segStart = 0;
+	let inSingle = false,
+		inDouble = false,
+		depth = 0,
+		segStart = 0;
 	for (let i = 0; i < prefix.length; i++) {
 		const ch = prefix[i]!;
-		if (inSingle) { if (ch === "'") inSingle = false; continue; }
-		if (inDouble) { if (ch === '"') inDouble = false; continue; }
-		if (ch === "'") { inSingle = true; continue; }
-		if (ch === '"') { inDouble = true; continue; }
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') inDouble = false;
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			continue;
+		}
 		if (ch === "(") {
 			if (!prefix.slice(segStart, i).includes(" -- ")) {
 				depth++;
 				segStart = i + 1;
 			}
-		}
-		else if (ch === ")") {
+		} else if (ch === ")") {
 			if (depth > 0) {
 				depth--;
 				segStart = i + 1;
 			}
-		}
-		else if (ch === "|" && depth > 0) segStart = i + 1;
+		} else if (ch === "|" && depth > 0) segStart = i + 1;
 		else if (ch === ">" && prefix[i - 1] === "-" && depth === 0) segStart = i + 1;
 	}
 	// Inside an open quote, or once the task has started (`--` / a quote), we are no
@@ -191,33 +229,22 @@ const makeChainCompletions = (state: SubagentState) => (prefix: string) => {
 
 const makeBuiltinAgentNameCompletions = () => (prefix: string) => {
 	if (prefix.includes(" ")) return null;
-	return BUILTIN_AGENT_NAMES
-		.filter((name) => name.startsWith(prefix))
-		.map((name) => ({ value: name, label: name }));
+	return BUILTIN_AGENT_NAMES.filter((name) => name.startsWith(prefix)).map((name) => ({ value: name, label: name }));
 };
 
 const makeProviderCompletions = (state: SubagentState) => (prefix: string) => {
 	if (prefix.includes(" ")) return null;
 	const available = state.lastUiContext?.modelRegistry?.getAvailable?.();
 	if (!Array.isArray(available)) return null;
-	const providers = [...new Set(available
-		.map((model) => typeof model?.provider === "string" ? model.provider : "")
-		.filter(Boolean))]
-		.sort((a, b) => a.localeCompare(b));
-	return providers
-		.filter((provider) => provider.startsWith(prefix))
-		.map((provider) => ({ value: provider, label: provider }));
+	const providers = [...new Set(available.map((model) => (typeof model?.provider === "string" ? model.provider : "")).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+	return providers.filter((provider) => provider.startsWith(prefix)).map((provider) => ({ value: provider, label: provider }));
 };
 
 function sendSlashText(pi: ExtensionAPI, text: string): void {
 	pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
 
-async function withSlashStatus<T>(
-	ctx: ExtensionContext,
-	text: string,
-	run: () => Promise<T>,
-): Promise<T> {
+async function withSlashStatus<T>(ctx: ExtensionContext, text: string, run: () => Promise<T>): Promise<T> {
 	if (ctx.hasUI) ctx.ui.setStatus("subagent-slash-text", text);
 	try {
 		return await run();
@@ -267,9 +294,7 @@ function scheduledStopTargets(ctx: ExtensionContext, state: SubagentState): Stop
 	} catch {
 		return [];
 	}
-	const jobs = parsed && typeof parsed === "object" && Array.isArray((parsed as { jobs?: unknown }).jobs)
-		? (parsed as { jobs: Array<Record<string, unknown>> }).jobs
-		: [];
+	const jobs = parsed && typeof parsed === "object" && Array.isArray((parsed as { jobs?: unknown }).jobs) ? (parsed as { jobs: Array<Record<string, unknown>> }).jobs : [];
 	return jobs
 		.filter((job) => job.state === "scheduled" && typeof job.id === "string" && typeof job.name === "string" && typeof job.runAt === "number")
 		.sort((left, right) => Number(left.runAt) - Number(right.runAt))
@@ -360,7 +385,7 @@ class SubagentsStopSelector implements Component {
 			const target = this.targets[index]!;
 			const selected = index === this.selected;
 			const marker = selected ? "›" : " ";
-				const actionLabel = target.actionLabel;
+			const actionLabel = target.actionLabel;
 			const action = target.kind === "scheduled" ? this.theme.fg("warning", actionLabel) : this.theme.fg("accent", actionLabel);
 			const labelWidth = Math.max(0, contentWidth - marker.length - actionLabel.length - 2);
 			lines.push(`${marker} ${action} ${target.label.slice(0, labelWidth)}`);
@@ -470,11 +495,7 @@ function buildSubagentCostReport(ctx: ExtensionContext): string {
 	}
 	addUsage(total, parent);
 	addUsage(total, childTotal);
-	const lines = [
-		"Subagent cost",
-		"",
-		formatCostUsage("Parent", parent),
-	];
+	const lines = ["Subagent cost", "", formatCostUsage("Parent", parent)];
 	if (children.length === 0) {
 		lines.push("No subagent child usage found in this session.");
 	} else {
@@ -501,9 +522,7 @@ function getProfileWorkerModel(profile: { subagents?: { agentOverrides?: Record<
 function loadSavedOutputSchema(chain: ChainConfig, stepAgent: string, outputSchema: unknown): JsonSchemaObject | undefined {
 	if (outputSchema === undefined) return undefined;
 	if (typeof outputSchema === "string") {
-		const schemaPath = path.isAbsolute(outputSchema)
-			? outputSchema
-			: path.join(path.dirname(chain.filePath), outputSchema);
+		const schemaPath = path.isAbsolute(outputSchema) ? outputSchema : path.join(path.dirname(chain.filePath), outputSchema);
 		const parsed = JSON.parse(fs.readFileSync(schemaPath, "utf-8")) as unknown;
 		assertJsonSchemaObject(parsed, `outputSchema for chain '${chain.name}' step '${stepAgent}' (${schemaPath})`);
 		return parsed;
@@ -551,21 +570,14 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 	});
 };
 
-async function requestSlashRun(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	requestId: string,
-	params: SubagentParamsLike,
-): Promise<SlashSubagentResponse> {
+async function requestSlashRun(pi: ExtensionAPI, ctx: ExtensionContext, requestId: string, params: SubagentParamsLike): Promise<SlashSubagentResponse> {
 	return new Promise((resolve, reject) => {
 		let done = false;
 		let started = false;
 
 		const startTimeoutMs = 15_000;
 		const startTimeout = setTimeout(() => {
-			finish(() => reject(new Error(
-				"Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.",
-			)));
+			finish(() => reject(new Error("Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.")));
 		}, startTimeoutMs);
 
 		const onStarted = (data: unknown) => {
@@ -598,11 +610,11 @@ async function requestSlashRun(
 
 		const onTerminalInput = ctx.hasUI
 			? ctx.ui.onTerminalInput((input) => {
-				if (!matchesKey(input, Key.escape)) return undefined;
-				pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
-				finish(() => reject(new Error("Cancelled")));
-				return { consume: true };
-			})
+					if (!matchesKey(input, Key.escape)) return undefined;
+					pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
+					finish(() => reject(new Error("Cancelled")));
+					return { consume: true };
+				})
 			: undefined;
 
 		const unsubStarted = pi.events.on(SLASH_SUBAGENT_STARTED_EVENT, onStarted);
@@ -626,9 +638,7 @@ async function requestSlashRun(
 		// If not started, no bridge received the request.
 		if (!started && done) return;
 		if (!started) {
-			finish(() => reject(new Error(
-				"No slash subagent bridge responded. Ensure the subagent extension is loaded correctly.",
-			)));
+			finish(() => reject(new Error("No slash subagent bridge responded. Ensure the subagent extension is loaded correctly.")));
 		}
 	});
 }
@@ -647,9 +657,7 @@ function formatExportPathList(paths: string[]): string {
 }
 
 function collectResultPaths(results: SingleResult[], getPath: (result: SingleResult) => string | undefined): string[] {
-	return results
-		.map(getPath)
-		.filter((file): file is string => typeof file === "string" && file.length > 0);
+	return results.map(getPath).filter((file): file is string => typeof file === "string" && file.length > 0);
 }
 
 function buildSlashExportText(response: SlashSubagentResponse): string {
@@ -682,11 +690,7 @@ function persistSlashSessionSnapshot(ctx: ExtensionContext): void {
 	}
 }
 
-async function runSlashSubagent(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	params: SubagentParamsLike,
-): Promise<void> {
+async function runSlashSubagent(pi: ExtensionAPI, ctx: ExtensionContext, params: SubagentParamsLike): Promise<void> {
 	if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 	const requestId = randomUUID();
 	const initialDetails = buildSlashInitialResult(requestId, params);
@@ -736,28 +740,56 @@ async function runSlashSubagent(
 	}
 }
 
-
-export interface GroupConfig { concurrency?: number; failFast?: boolean; worktree?: boolean }
-export interface ParsedStep { kind: "step"; name: string; config: InlineConfig; task?: string }
-export interface ParsedGroup { kind: "group"; tasks: ParsedStep[]; config: GroupConfig }
+export interface GroupConfig {
+	concurrency?: number;
+	failFast?: boolean;
+	worktree?: boolean;
+}
+export interface ParsedStep {
+	kind: "step";
+	name: string;
+	config: InlineConfig;
+	task?: string;
+}
+export interface ParsedGroup {
+	kind: "group";
+	tasks: ParsedStep[];
+	config: GroupConfig;
+}
 export type ParsedGroupStep = ParsedStep | ParsedGroup;
 
-export const PARALLEL_GROUP_USAGE =
-	'Usage: /chain agent "task" -> (agent2 "task" | agent3 "task") -> agent4';
+export const PARALLEL_GROUP_USAGE = 'Usage: /chain agent "task" -> (agent2 "task" | agent3 "task") -> agent4';
 
 export class SlashParseError extends Error {}
 
 // Walk `input` tracking quote/paren state; returns true if parens are unbalanced.
 function findUnmatchedCloseParen(input: string): boolean {
-	let depth = 0, inSingle = false, inDouble = false;
+	let depth = 0,
+		inSingle = false,
+		inDouble = false;
 	for (let i = 0; i < input.length; i++) {
 		const ch = input[i]!;
-		if (inSingle) { if (ch === "'") inSingle = false; continue; }
-		if (inDouble) { if (ch === '"') inDouble = false; continue; }
-		if (ch === "'") { inSingle = true; continue; }
-		if (ch === '"') { inDouble = true; continue; }
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') inDouble = false;
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			continue;
+		}
 		if (ch === "(") depth++;
-		else if (ch === ")") { depth--; if (depth < 0) return true; }
+		else if (ch === ")") {
+			depth--;
+			if (depth < 0) return true;
+		}
 	}
 	return depth !== 0;
 }
@@ -765,13 +797,28 @@ function findUnmatchedCloseParen(input: string): boolean {
 // Split on top-level " -> ", ignoring arrows inside quotes or parentheses.
 function splitOnArrow(input: string): string[] {
 	const segments: string[] = [];
-	let depth = 0, inSingle = false, inDouble = false, start = 0;
+	let depth = 0,
+		inSingle = false,
+		inDouble = false,
+		start = 0;
 	for (let i = 0; i < input.length; i++) {
 		const ch = input[i]!;
-		if (inSingle) { if (ch === "'") inSingle = false; continue; }
-		if (inDouble) { if (ch === '"') inDouble = false; continue; }
-		if (ch === "'") { inSingle = true; continue; }
-		if (ch === '"') { inDouble = true; continue; }
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') inDouble = false;
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			continue;
+		}
 		if (ch === "(") depth++;
 		else if (ch === ")") depth--;
 		else if (depth === 0 && ch === "-" && input[i + 1] === ">" && input[i + 2] === " ") {
@@ -787,13 +834,28 @@ function splitOnArrow(input: string): string[] {
 // Split a group's inner text on top-level " | ", ignoring pipes inside quotes/parens.
 function splitGroupTasks(inner: string): string[] {
 	const parts: string[] = [];
-	let depth = 0, inSingle = false, inDouble = false, start = 0;
+	let depth = 0,
+		inSingle = false,
+		inDouble = false,
+		start = 0;
 	for (let i = 0; i < inner.length; i++) {
 		const ch = inner[i]!;
-		if (inSingle) { if (ch === "'") inSingle = false; continue; }
-		if (inDouble) { if (ch === '"') inDouble = false; continue; }
-		if (ch === "'") { inSingle = true; continue; }
-		if (ch === '"') { inDouble = true; continue; }
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') inDouble = false;
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			continue;
+		}
 		if (ch === "(") depth++;
 		else if (ch === ")") depth--;
 		else if (ch === "|" && depth === 0) {
@@ -833,9 +895,17 @@ const parseGroupConfig = (raw: string): GroupConfig => {
 		const key = eq === -1 ? trimmed : trimmed.slice(0, eq).trim();
 		const val = eq === -1 ? "" : trimmed.slice(eq + 1).trim();
 		switch (key) {
-			case "concurrency": { const n = Number(val); if (Number.isInteger(n) && n > 0) config.concurrency = n; break; }
-			case "failFast": config.failFast = eq === -1 ? true : val !== "false"; break;
-			case "worktree": config.worktree = eq === -1 ? true : val !== "false"; break;
+			case "concurrency": {
+				const n = Number(val);
+				if (Number.isInteger(n) && n > 0) config.concurrency = n;
+				break;
+			}
+			case "failFast":
+				config.failFast = eq === -1 ? true : val !== "false";
+				break;
+			case "worktree":
+				config.worktree = eq === -1 ? true : val !== "false";
+				break;
 		}
 	}
 	return config;
@@ -844,15 +914,36 @@ const parseGroupConfig = (raw: string): GroupConfig => {
 // Split `(...)` from an optional trailing `[...]` group-config suffix, respecting
 // quotes and nested parens. Returns the inner group text and the parsed config.
 const splitGroupBody = (trimmed: string): { inner: string; config: GroupConfig } => {
-	let depth = 0, inSingle = false, inDouble = false, closeIdx = -1;
+	let depth = 0,
+		inSingle = false,
+		inDouble = false,
+		closeIdx = -1;
 	for (let i = 0; i < trimmed.length; i++) {
 		const ch = trimmed[i]!;
-		if (inSingle) { if (ch === "'") inSingle = false; continue; }
-		if (inDouble) { if (ch === '"') inDouble = false; continue; }
-		if (ch === "'") { inSingle = true; continue; }
-		if (ch === '"') { inDouble = true; continue; }
+		if (inSingle) {
+			if (ch === "'") inSingle = false;
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') inDouble = false;
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			continue;
+		}
 		if (ch === "(") depth++;
-		else if (ch === ")") { depth--; if (depth === 0) { closeIdx = i; break; } }
+		else if (ch === ")") {
+			depth--;
+			if (depth === 0) {
+				closeIdx = i;
+				break;
+			}
+		}
 	}
 	if (closeIdx === -1) throw new SlashParseError(`Unmatched parentheses in group: '${trimmed}'`);
 	const inner = trimmed.slice(1, closeIdx);
@@ -870,7 +961,9 @@ export function parseGroupSegment(segment: string): ParsedGroup {
 		throw new SlashParseError(`Parallel group must be wrapped in parentheses: '${trimmed}'`);
 	}
 	const { inner, config } = splitGroupBody(trimmed);
-	const rawParts = splitGroupTasks(inner).map((p) => p.trim()).filter((p) => p.length > 0);
+	const rawParts = splitGroupTasks(inner)
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
 	if (rawParts.length < 2) {
 		throw new SlashParseError("Parallel group must contain at least two tasks separated by ' | '");
 	}
@@ -913,12 +1006,7 @@ export function parseChainExpression(input: string): { steps: ParsedGroupStep[] 
 	return { steps };
 }
 
-const parseAgentArgs = (
-	state: SubagentState,
-	args: string,
-	command: string,
-	ctx: ExtensionContext,
-): { steps: ParsedStep[]; task: string } | null => {
+const parseAgentArgs = (state: SubagentState, args: string, command: string, ctx: ExtensionContext): { steps: ParsedStep[]; task: string } | null => {
 	const input = args.trim();
 	const usage = `Usage: /${command} agent1 "task1" -> agent2 "task2"`;
 	let steps: ParsedStep[];
@@ -947,7 +1035,10 @@ const parseAgentArgs = (
 			ctx.ui.notify(usage, "error");
 			return null;
 		}
-		steps = agentsPart.split(/\s+/).filter(Boolean).map((t) => parseSingleTaskToken(t));
+		steps = agentsPart
+			.split(/\s+/)
+			.filter(Boolean)
+			.map((t) => parseSingleTaskToken(t));
 	}
 
 	if (steps.length === 0) {
@@ -1000,7 +1091,9 @@ function validateInlineAcceptanceInput(value: string, agent: string): void {
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
-		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none or verified acceptance contracts; reviewed is inferred-only.`);
+		throw new SlashParseError(
+			`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none or verified acceptance contracts; reviewed is inferred-only.`,
+		);
 	}
 }
 
@@ -1021,12 +1114,7 @@ function loadInlineOutputSchema(baseCwd: string, agent: string, value: string): 
 
 // Build a ChainStep object from a parsed token. `inGroup` enables `count` (parallel-only).
 // May throw SlashParseError for an invalid acceptance level or outputSchema path.
-const mapParsedTaskToStepObject = (
-	step: ParsedStep,
-	fallbackTask: string | undefined,
-	isFirst: boolean,
-	opts: { baseCwd: string; inGroup: boolean },
-): ChainStepObject => {
+const mapParsedTaskToStepObject = (step: ParsedStep, fallbackTask: string | undefined, isFirst: boolean, opts: { baseCwd: string; inGroup: boolean }): ChainStepObject => {
 	const { name, config, task: stepTask } = step;
 	if (config.acceptance !== undefined) validateInlineAcceptanceInput(config.acceptance, name);
 	return {
@@ -1048,20 +1136,14 @@ const mapParsedTaskToStepObject = (
 	};
 };
 
-export function buildChainExpressionSteps(
-	state: SubagentState,
-	input: string,
-	ctx: ExtensionContext,
-): { chain: ChainStep[]; task: string } | null {
+export function buildChainExpressionSteps(state: SubagentState, input: string, ctx: ExtensionContext): { chain: ChainStep[]; task: string } | null {
 	const notify = (message: string) => ctx.ui.notify(message, "error");
 	if (!hasGroupSyntax(input)) {
 		const parsed = parseAgentArgs(state, input, "chain", ctx);
 		if (!parsed) return null;
 		const baseCwd = state.baseCwd!; // parseAgentArgs already verified baseCwd is set
 		try {
-			const chain: ChainStep[] = parsed.steps.map((step, i) =>
-				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }),
-			);
+			const chain: ChainStep[] = parsed.steps.map((step, i) => mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }));
 			return { chain, task: parsed.task };
 		} catch (error) {
 			notify(error instanceof Error ? error.message : String(error));
@@ -1081,9 +1163,7 @@ export function buildChainExpressionSteps(
 		return null;
 	}
 	const agents = discoverAgents(state.baseCwd, "both").agents;
-	const stepAgentNames = expression.steps.flatMap((step) =>
-		step.kind === "group" ? step.tasks.map((t) => t.name) : [step.name],
-	);
+	const stepAgentNames = expression.steps.flatMap((step) => (step.kind === "group" ? step.tasks.map((t) => t.name) : [step.name]));
 	for (const name of stepAgentNames) {
 		if (!agents.find((a) => a.name === name)) {
 			notify(`Unknown agent: ${name}`);
@@ -1098,18 +1178,12 @@ export function buildChainExpressionSteps(
 		}
 	}
 	const firstStep = expression.steps[0]!;
-	const firstHasTask =
-		firstStep.kind === "group"
-			? firstStep.tasks.some((t) => Boolean(t.task))
-			: Boolean(firstStep.task);
+	const firstHasTask = firstStep.kind === "group" ? firstStep.tasks.some((t) => Boolean(t.task)) : Boolean(firstStep.task);
 	if (!firstHasTask) {
 		notify('First step must have a task: /chain agent "task" -> agent2');
 		return null;
 	}
-	const sharedTask =
-		firstStep.kind === "group"
-			? (firstStep.tasks.find((t) => t.task)?.task ?? "")
-			: (firstStep.task ?? "");
+	const sharedTask = firstStep.kind === "group" ? (firstStep.tasks.find((t) => t.task)?.task ?? "") : (firstStep.task ?? "");
 	const baseCwd = state.baseCwd;
 	let chain: ChainStep[];
 	try {
@@ -1132,10 +1206,7 @@ export function buildChainExpressionSteps(
 	return { chain, task: sharedTask };
 }
 
-export function registerSlashCommands(
-	pi: ExtensionAPI,
-	state: SubagentState,
-): void {
+export function registerSlashCommands(pi: ExtensionAPI, state: SubagentState): void {
 	let fleetOpen = false;
 	const showFleet = async (ctx: ExtensionContext) => {
 		state.lastUiContext = ctx;
@@ -1148,9 +1219,21 @@ export function registerSlashCommands(
 			return;
 		}
 		fleetOpen = true;
+		let takeover: TakeoverAdapter | undefined;
 		try {
-			await openSubagentFleet(ctx, state);
+			try {
+				takeover = new TakeoverAdapter(state, {
+					send: (runId, index, message) => runSlashSubagent(pi, ctx, { action: "steer", id: runId, ...(index !== undefined ? { index } : {}), message }),
+					abort: (runId, index) => runSlashSubagent(pi, ctx, { action: "interrupt", id: runId, ...(index !== undefined ? { index } : {}) }),
+					onError: (error) => ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"),
+				});
+				await openSubagentTakeover(ctx, takeover);
+			} catch (error) {
+				ctx.ui.notify(`Takeover UI unavailable; opening classic fleet: ${error instanceof Error ? error.message : String(error)}`, "warning");
+				await openSubagentFleet(ctx, state);
+			}
 		} finally {
+			takeover?.dispose();
 			fleetOpen = false;
 		}
 	};
@@ -1162,13 +1245,22 @@ export function registerSlashCommands(
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
 			const input = cleanedArgs.trim();
 			const firstSpace = input.indexOf(" ");
-			if (!input) { ctx.ui.notify("Usage: /run <agent> [task] [--bg] [--fork]", "error"); return; }
+			if (!input) {
+				ctx.ui.notify("Usage: /run <agent> [task] [--bg] [--fork]", "error");
+				return;
+			}
 			const { name: agentName, config: inline } = parseAgentToken(firstSpace === -1 ? input : input.slice(0, firstSpace));
 			const task = firstSpace === -1 ? "" : input.slice(firstSpace + 1).trim();
 
-			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
+			if (!state.baseCwd) {
+				ctx.ui.notify("Subagent session cwd is not initialized yet", "error");
+				return;
+			}
 			const agents = discoverAgents(state.baseCwd, "both").agents;
-			if (!agents.find((a) => a.name === agentName)) { ctx.ui.notify(`Unknown agent: ${agentName}`, "error"); return; }
+			if (!agents.find((a) => a.name === agentName)) {
+				ctx.ui.notify(`Unknown agent: ${agentName}`, "error");
+				return;
+			}
 
 			let finalTask = task;
 			if (inline.reads && Array.isArray(inline.reads) && inline.reads.length > 0) {
@@ -1186,7 +1278,7 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("chain", {
-		description: "Run agents in sequence: /chain scout \"task\" -> planner [--bg] [--fork]",
+		description: 'Run agents in sequence: /chain scout "task" -> planner [--bg] [--fork]',
 		getArgumentCompletions: makeAgentCompletions(state, true),
 		handler: async (args, ctx) => {
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
@@ -1216,7 +1308,10 @@ export function registerSlashCommands(
 				ctx.ui.notify(usage, "error");
 				return;
 			}
-			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
+			if (!state.baseCwd) {
+				ctx.ui.notify("Subagent session cwd is not initialized yet", "error");
+				return;
+			}
 			const chain = discoverSavedChains(state.baseCwd).find((candidate) => candidate.name === chainName);
 			if (!chain) {
 				ctx.ui.notify(`Unknown chain: ${chainName}`, "error");
@@ -1230,7 +1325,7 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("parallel", {
-		description: "Run agents in parallel: /parallel scout \"task1\" -> reviewer \"task2\" [--bg] [--fork]",
+		description: 'Run agents in parallel: /parallel scout "task1" -> reviewer "task2" [--bg] [--fork]',
 		getArgumentCompletions: makeAgentCompletions(state, true),
 		handler: async (args, ctx) => {
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
@@ -1287,7 +1382,10 @@ export function registerSlashCommands(
 			}
 
 			if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") {
-				sendSlashText(pi, "Selector unavailable in child-safe fanout mode. Pass an explicit current-session top-level async run id, for example `/subagents-stop <run-id>` or `subagent({ action: \"stop\", id: \"<run-id>\" })`.");
+				sendSlashText(
+					pi,
+					'Selector unavailable in child-safe fanout mode. Pass an explicit current-session top-level async run id, for example `/subagents-stop <run-id>` or `subagent({ action: "stop", id: "<run-id>" })`.',
+				);
 				return;
 			}
 
@@ -1308,10 +1406,10 @@ export function registerSlashCommands(
 				return;
 			}
 
-			const result = await ctx.ui.custom<StopSelectorResult>(
-				(tui, theme, _kb, done) => new SubagentsStopSelector(tui, theme, targets, done),
-				{ overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } },
-			);
+			const result = await ctx.ui.custom<StopSelectorResult>((tui, theme, _kb, done) => new SubagentsStopSelector(tui, theme, targets, done), {
+				overlay: true,
+				overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" },
+			});
 			if (!result?.confirmed || !result.target) return;
 			if (result.target.kind === "scheduled") {
 				await runSlashSubagent(pi, ctx, { action: "schedule-cancel", id: result.target.id });
@@ -1380,17 +1478,10 @@ export function registerSlashCommands(
 					const { profile } = readSubagentProfile(parsed.value);
 					const workerModel = getProfileWorkerModel(profile);
 					const result = applySubagentProfile(parsed.value);
-					const lines = [
-						`Loaded subagent profile: ${parsed.value}`,
-						`Profile: ${result.filePath}`,
-						`Updated: ${result.settingsPath}`,
-					];
+					const lines = [`Loaded subagent profile: ${parsed.value}`, `Profile: ${result.filePath}`, `Updated: ${result.settingsPath}`];
 
 					if (workerModel && typeof pi.setModel === "function" && typeof ctx.modelRegistry?.find === "function" && typeof ctx.modelRegistry?.getAvailable === "function") {
-						const shouldSwitch = await ctx.ui.confirm(
-							"",
-							`Profile loaded. Also switch this session to the profile worker model?\n\n${workerModel}`,
-						);
+						const shouldSwitch = await ctx.ui.confirm("", `Profile loaded. Also switch this session to the profile worker model?\n\n${workerModel}`);
 						if (shouldSwitch) {
 							const modelInfo = findModelInfo(workerModel, ctx.modelRegistry.getAvailable().map(toModelInfo));
 							const model = modelInfo ? ctx.modelRegistry.find(modelInfo.provider, modelInfo.id) : undefined;
@@ -1474,7 +1565,9 @@ export function registerSlashCommands(
 						`  strong=${result.qualityModels.strong}`,
 					];
 					if (result.selectedHeuristicFallbackCount > 0) {
-						lines.push(`Warning: generated profiles depend on heuristic-only classification for ${result.selectedHeuristicFallbackCount} selected model${result.selectedHeuristicFallbackCount === 1 ? "" : "s"}.`);
+						lines.push(
+							`Warning: generated profiles depend on heuristic-only classification for ${result.selectedHeuristicFallbackCount} selected model${result.selectedHeuristicFallbackCount === 1 ? "" : "s"}.`,
+						);
 					} else if (result.heuristicFallbackCount > 0) {
 						lines.push(`Warning: provider catalog still contains ${result.heuristicFallbackCount} heuristic-classified model${result.heuristicFallbackCount === 1 ? "" : "s"}.`);
 					}
@@ -1508,7 +1601,10 @@ export function registerSlashCommands(
 						`Profile: ${result.profileName}`,
 						`File: ${result.filePath}`,
 						"",
-						...result.results.map((entry) => `${entry.agent} → ${entry.model} — registry ${entry.inRegistry ? "ok" : "missing"}; probe ${entry.probe.status}${entry.probe.message ? ` (${entry.probe.message.split(/\r?\n/, 1)[0]})` : ""}`),
+						...result.results.map(
+							(entry) =>
+								`${entry.agent} → ${entry.model} — registry ${entry.inRegistry ? "ok" : "missing"}; probe ${entry.probe.status}${entry.probe.message ? ` (${entry.probe.message.split(/\r?\n/, 1)[0]})` : ""}`,
+						),
 					];
 					sendSlashText(pi, lines.join("\n"));
 				});
@@ -1517,5 +1613,4 @@ export function registerSlashCommands(
 			}
 		},
 	});
-
 }

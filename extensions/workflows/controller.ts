@@ -1,4 +1,5 @@
-const DEFAULT_CONCURRENCY = 4;
+// Workflow calls are mutation-capable by default; serialize shared-cwd writers.
+const DEFAULT_CONCURRENCY = 1;
 export const MAX_AGENT_CALLS = 32;
 export const RUN_SHUTDOWN_TIMEOUT_MS = 8_000;
 
@@ -83,11 +84,23 @@ export class RunController {
   private sealed = false;
   private parentAbort?: () => void;
   private parentSignal?: AbortSignal;
+  private readonly deadlineTimer: ReturnType<typeof setTimeout>;
+  readonly deadlineAt: number;
 
-  constructor(parentSignal?: AbortSignal, concurrency = DEFAULT_CONCURRENCY) {
+  constructor(
+    parentSignal?: AbortSignal,
+    concurrency = DEFAULT_CONCURRENCY,
+    timeoutMs = 30 * 60 * 1000,
+  ) {
     this.semaphore = new Semaphore(
       Math.max(1, Math.min(DEFAULT_CONCURRENCY, Math.floor(concurrency))),
     );
+    this.deadlineAt = Date.now() + timeoutMs;
+    this.deadlineTimer = setTimeout(
+      () => this.abort("Workflow deadline exceeded"),
+      timeoutMs,
+    );
+    this.deadlineTimer.unref?.();
     if (parentSignal) {
       this.parentSignal = parentSignal;
       this.parentAbort = () => this.abort("Parent operation was aborted");
@@ -105,6 +118,10 @@ export class RunController {
 
   get calls() {
     return this.callCount;
+  }
+
+  remainingMs() {
+    return Math.max(0, this.deadlineAt - Date.now());
   }
 
   schedule<T>(
@@ -183,6 +200,7 @@ export class RunController {
   }
 
   private detachParent() {
+    clearTimeout(this.deadlineTimer);
     if (this.parentAbort) {
       this.parentSignal?.removeEventListener("abort", this.parentAbort);
     }

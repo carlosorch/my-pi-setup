@@ -51,7 +51,8 @@ const envSnapshot = {
 	PI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
 };
 
-const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
+const SKILLS_SECTION =
+	"\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 const BASE_PROMPT = [
 	"You are a subagent.",
@@ -62,13 +63,14 @@ const BASE_PROMPT = [
 ].join("");
 
 const PROMPT_WITH_EXPLICIT_SKILL = [
-	"You are a subagent.\n\n<skill name=\"explicit\">\nKeep this section\n</skill>",
+	'You are a subagent.\n\n<skill name="explicit">\nKeep this section\n</skill>',
 	"\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## /repo/AGENTS.md\n\nProject rules\n\n",
 	SKILLS_SECTION,
 	"\nCurrent date: 2026-04-16",
 ].join("");
 
-const CONFIGURED_SKILLS_SECTION = "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
+const CONFIGURED_SKILLS_SECTION =
+	"\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 afterEach(() => {
 	if (envSnapshot.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined) delete process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT;
@@ -152,23 +154,31 @@ describe("subagent prompt runtime", () => {
 			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
 			let watchedDir: fs.PathLike | undefined;
-			const fakeWatcher = { on() { return fakeWatcher; }, close() {} } as fs.FSWatcher;
-
-			registerSteeringInbox({
-				on(event: string, handler: (payload?: unknown) => unknown) {
-					handlers.set(event, handler);
-				},
-				sendUserMessage() {},
-			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
-				nativeRealpath(target) {
-					assert.equal(target, inbox);
-					return nativeInbox;
-				},
-				watch: ((target: fs.PathLike) => {
-					watchedDir = target;
+			const fakeWatcher = {
+				on() {
 					return fakeWatcher;
-				}) as typeof fs.watch,
-			});
+				},
+				close() {},
+			} as fs.FSWatcher;
+
+			registerSteeringInbox(
+				{
+					on(event: string, handler: (payload?: unknown) => unknown) {
+						handlers.set(event, handler);
+					},
+					sendUserMessage() {},
+				} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void },
+				{
+					nativeRealpath(target) {
+						assert.equal(target, inbox);
+						return nativeInbox;
+					},
+					watch: ((target: fs.PathLike) => {
+						watchedDir = target;
+						return fakeWatcher;
+					}) as typeof fs.watch,
+				},
+			);
 
 			handlers.get("session_start")?.({});
 			assert.equal(watchedDir, nativeInbox);
@@ -203,7 +213,10 @@ describe("subagent prompt runtime", () => {
 			assert.equal(sent[0]?.options.deliverAs, "steer");
 			assert.match(sent[0]?.content ?? "", /Mid-run steering/);
 			assert.match(sent[0]?.content ?? "", /Focus on tests\./);
-			assert.deepEqual(fs.readdirSync(inbox).filter((entry) => entry.endsWith(".json")), []);
+			assert.deepEqual(
+				fs.readdirSync(inbox).filter((entry) => entry.endsWith(".json")),
+				[],
+			);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
@@ -345,7 +358,7 @@ describe("subagent prompt runtime", () => {
 			inheritProjectContext: false,
 			inheritSkills: false,
 		});
-		assert.ok(rewritten.includes("<skill name=\"explicit\">"));
+		assert.ok(rewritten.includes('<skill name="explicit">'));
 		assert.ok(!rewritten.includes("<available_skills>"));
 		assert.ok(!rewritten.includes("# Project Context"));
 	});
@@ -381,11 +394,11 @@ describe("subagent prompt runtime", () => {
 	});
 
 	it("strips explicit pi-subagents skill injection from child prompts", () => {
-		const prompt = "Before\n\n<skill name=\"pi-subagents\">\nDo not keep this.\n</skill>\n\n<skill name=\"safe-bash\">\nKeep this.\n</skill>\nAfter";
+		const prompt = 'Before\n\n<skill name="pi-subagents">\nDo not keep this.\n</skill>\n\n<skill name="safe-bash">\nKeep this.\n</skill>\nAfter';
 		const rewritten = stripSubagentOrchestrationSkill(prompt);
 
 		assert.ok(!rewritten.includes("Do not keep this"));
-		assert.ok(rewritten.includes("<skill name=\"safe-bash\">"));
+		assert.ok(rewritten.includes('<skill name="safe-bash">'));
 	});
 
 	it("strips parent-only subagent custom messages from forked child context", () => {
@@ -396,10 +409,18 @@ describe("subagent prompt runtime", () => {
 		const notify = { role: "custom", customType: "subagent-notify", content: "Background task completed" };
 		const control = { role: "custom", customType: "subagent_control_notice", content: "needs attention" };
 		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
-		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
+		const childWatchdogWarning = {
+			role: "custom",
+			customType: SUBAGENT_WATCHDOG_WARNING_TYPE,
+			content: "<subagent_watchdog>child-visible</subagent_watchdog>",
+			details: { source: "child" },
+		};
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
-		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, watchdogWarning, childWatchdogWarning, otherCustom]), [user, otherCustom]);
+		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, watchdogWarning, childWatchdogWarning, otherCustom]), [
+			user,
+			otherCustom,
+		]);
 	});
 
 	it("strips prior parent subagent tool calls and results from forked child context", () => {
@@ -419,20 +440,17 @@ describe("subagent prompt runtime", () => {
 			content: [{ type: "toolCall", name: "subagent", input: { agent: "reviewer" } }],
 		};
 
-		assert.deepEqual(
-			stripParentOnlySubagentMessages([user, subagentResult, readResult, mixedAssistant, pureSubagentCall]),
-			[
-				user,
-				readResult,
-				{
-					role: "assistant",
-					content: [
-						{ type: "text", text: "I will inspect the repo." },
-						{ type: "toolCall", name: "read", input: { path: "README.md" } },
-					],
-				},
-			],
-		);
+		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentResult, readResult, mixedAssistant, pureSubagentCall]), [
+			user,
+			readResult,
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "I will inspect the repo." },
+					{ type: "toolCall", name: "read", input: { path: "README.md" } },
+				],
+			},
+		]);
 	});
 
 	it("preserves live nested subagent calls and results in fanout child context", () => {
@@ -510,6 +528,9 @@ describe("subagent prompt runtime", () => {
 	});
 
 	it("records and explains requested tools missing from the child registry", async () => {
+		delete process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV];
+		delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
+		delete process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV];
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-tool-diagnostic-"));
 		try {
 			const diagnosticPath = path.join(dir, "tools.json");
@@ -526,7 +547,7 @@ describe("subagent prompt runtime", () => {
 				getAllTools: () => available.map((name) => ({ name })),
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }> });
 
-			const missing = await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT }) as { systemPrompt?: string } | undefined;
+			const missing = (await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT })) as { systemPrompt?: string } | undefined;
 			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
 				agent: "extension-worker",
 				required: ["read", "fixture_search"],
@@ -558,7 +579,11 @@ describe("subagent prompt runtime", () => {
 			setSessionName(name: string) {
 				sessionName = name;
 			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }>; setSessionName(name: string): void });
+		} as {
+			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void;
+			getAllTools(): Array<{ name: string }>;
+			setSessionName(name: string): void;
+		});
 
 		await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 
@@ -618,12 +643,20 @@ describe("subagent prompt runtime", () => {
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "subagent results" };
 		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }] };
 		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
-		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
+		const childWatchdogWarning = {
+			role: "custom",
+			customType: SUBAGENT_WATCHDOG_WARNING_TYPE,
+			content: "<subagent_watchdog>child-visible</subagent_watchdog>",
+			details: { source: "child" },
+		};
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
-		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }), {
-			messages: [priorParentTurn, otherCustom, currentTask],
-		});
+		assert.deepEqual(
+			contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }),
+			{
+				messages: [priorParentTurn, otherCustom, currentTask],
+			},
+		);
 	});
 
 	it("does not rewrite child context when no parent-only artifacts are present", () => {

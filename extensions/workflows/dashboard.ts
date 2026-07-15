@@ -39,6 +39,7 @@ import {
   statusColor,
   statusWord,
   SQUARE,
+  RPC_TRANSCRIPT_UNAVAILABLE,
   type Theme,
   type AgentRecord,
   type PhaseGroup,
@@ -914,12 +915,7 @@ export class WorkflowDashboard {
     const theme = this.theme;
     const rows: string[] = [];
     if (agent.transcript.length === 0) {
-      return [
-        theme.fg(
-          "dim",
-          " transcript unavailable (this run predates transcript capture)",
-        ),
-      ];
+      return [theme.fg("dim", ` ${RPC_TRANSCRIPT_UNAVAILABLE}`)];
     }
 
     for (const entry of agent.transcript) {

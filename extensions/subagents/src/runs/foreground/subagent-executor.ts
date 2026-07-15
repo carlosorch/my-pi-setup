@@ -41,11 +41,24 @@ import { ChainOutputValidationError, validateChainOutputBindingsWithContext } fr
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
-import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
+import {
+	applyIntercomBridgeToAgent,
+	INTERCOM_BRIDGE_MARKER,
+	resolveIntercomBridge,
+	resolveIntercomSessionTarget,
+	resolveSubagentIntercomTarget,
+	type IntercomBridgeState,
+} from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import {
+	finalizeSingleOutput,
+	injectSingleOutputInstruction,
+	normalizeSingleOutputOverride,
+	resolveSingleOutputPath,
+	validateFileOnlyOutputMode,
+} from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
 import {
@@ -61,7 +74,18 @@ import { buildRevivedAsyncTask, interruptLiveAsyncResumeTarget, resolveAsyncResu
 import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
-import { attachRootChildrenToSteps, createNestedRoute, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import {
+	attachRootChildrenToSteps,
+	createNestedRoute,
+	readNestedControlResults,
+	resolveInheritedNestedRouteFromEnv,
+	resolveNestedAsyncDir,
+	resolveNestedParentAddressFromEnv,
+	updateForegroundNestedProjection,
+	writeNestedControlRequest,
+	writeNestedEvent,
+	type NestedRunResolutionScope,
+} from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
@@ -237,7 +261,8 @@ function getForegroundControl(state: SubagentState, runId: string | undefined) {
 
 function formatForegroundActivity(control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never): string | undefined {
 	const facts: string[] = [];
-	if (control.currentTool && control.currentToolStartedAt) facts.push(`tool ${control.currentTool} for ${Math.floor(Math.max(0, Date.now() - control.currentToolStartedAt) / 1000)}s`);
+	if (control.currentTool && control.currentToolStartedAt)
+		facts.push(`tool ${control.currentTool} for ${Math.floor(Math.max(0, Date.now() - control.currentToolStartedAt) / 1000)}s`);
 	else if (control.currentTool) facts.push(`tool ${control.currentTool}`);
 	if (control.currentPath) facts.push(`path ${control.currentPath}`);
 	if (control.turnCount !== undefined) facts.push(`${control.turnCount} turns`);
@@ -271,7 +296,13 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 	return [...new Set(roots)];
 }
 
-function reserveSubagentSpawns(input: { state: SubagentState; config: ExtensionConfig; sessionId: string | null; requested: number; mode: "single" | "parallel" | "chain" }): AgentToolResult<Details> | undefined {
+function reserveSubagentSpawns(input: {
+	state: SubagentState;
+	config: ExtensionConfig;
+	sessionId: string | null;
+	requested: number;
+	mode: "single" | "parallel" | "chain";
+}): AgentToolResult<Details> | undefined {
 	if (input.requested <= 0) return undefined;
 	if (input.state.subagentSpawns?.sessionId !== input.sessionId) {
 		input.state.subagentSpawns = { sessionId: input.sessionId, count: 0 };
@@ -280,7 +311,12 @@ function reserveSubagentSpawns(input: { state: SubagentState; config: ExtensionC
 	const used = input.state.subagentSpawns.count;
 	if (used + input.requested > maxSpawns) {
 		return {
-			content: [{ type: "text", text: `Subagent spawn limit reached for this session (${used}/${maxSpawns} used, ${input.requested} requested). Complete the work directly or start a new session.` }],
+			content: [
+				{
+					type: "text",
+					text: `Subagent spawn limit reached for this session (${used}/${maxSpawns} used, ${input.requested} requested). Complete the work directly or start a new session.`,
+				},
+			],
 			isError: true,
 			details: { mode: input.mode, results: [] },
 		};
@@ -331,7 +367,10 @@ function trimRememberedForegroundRuns(state: SubagentState): void {
 	}
 }
 
-function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[] }): void {
+function rememberForegroundRun(
+	state: SubagentState,
+	input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[] },
+): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -367,7 +406,10 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 	trimRememberedForegroundRuns(state);
 }
 
-function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus }): void {
+function updateRememberedForegroundChild(
+	state: SubagentState,
+	input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus },
+): void {
 	state.foregroundRuns ??= new Map();
 	const updatedAt = Date.now();
 	let run = state.foregroundRuns.get(input.runId);
@@ -381,9 +423,10 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...child,
 		agent: input.result.agent,
 		index: input.index,
-		status: input.result.acceptance?.status === "rejected"
-			? "failed"
-			: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
+		status:
+			input.result.acceptance?.status === "rejected"
+				? "failed"
+				: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.error ? { error: input.result.error } : {}),
@@ -401,9 +444,10 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	trimRememberedForegroundRuns(state);
 	const output = getSingleResultOutput(input.result).trim();
 	const success = input.result.exitCode === 0 && input.result.acceptance?.status !== "rejected";
-	const summary = !success && input.result.error
-		? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
-		: output || input.result.error || "Detached child exited without final output.";
+	const summary =
+		!success && input.result.error
+			? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
+			: output || input.result.error || "Detached child exited without final output.";
 	input.events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
 		id: `${input.runId}:${input.index}`,
 		runId: input.runId,
@@ -422,7 +466,10 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; intercomTarget: string; cwd: string; sessionFile: string } | undefined {
+function resolveForegroundResumeTarget(
+	params: SubagentParamsLike,
+	state: SubagentState,
+): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; intercomTarget: string; cwd: string; sessionFile: string } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
@@ -431,7 +478,10 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (matches.length === 0) return undefined;
 	if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((run) => run.runId).join(", ")}. Provide a longer id.`);
 	const run = matches[0]!;
-	if (run.children.some((child) => child.status === "detached")) throw new Error(`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`);
+	if (run.children.some((child) => child.status === "detached"))
+		throw new Error(
+			`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`,
+		);
 	if (run.children.length > 1 && params.index === undefined) throw new Error(`Foreground run '${run.runId}' has ${run.children.length} children. Provide index to choose one.`);
 	const index = params.index ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Foreground run '${run.runId}' index must be an integer.`);
@@ -441,7 +491,16 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
 	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}`);
-	return { runId: run.runId, mode: run.mode, state: "complete", agent: child.agent, index, intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index), cwd: run.cwd, sessionFile };
+	return {
+		runId: run.runId,
+		mode: run.mode,
+		state: "complete",
+		agent: child.agent,
+		index,
+		intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index),
+		cwd: run.cwd,
+		sessionFile,
+	};
 }
 
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
@@ -549,16 +608,9 @@ function getAsyncInterruptTarget(
 	return newest ? { asyncId: newest.asyncId, asyncDir: newest.asyncDir } : undefined;
 }
 
-function emitControlNotification(input: {
-	pi: ExtensionAPI;
-	controlConfig: ResolvedControlConfig;
-	intercomBridge: IntercomBridgeState;
-	event: ControlEvent;
-}): void {
+function emitControlNotification(input: { pi: ExtensionAPI; controlConfig: ResolvedControlConfig; intercomBridge: IntercomBridgeState; event: ControlEvent }): void {
 	if (!shouldNotifyControlEvent(input.controlConfig, input.event)) return;
-	const childIntercomTarget = input.intercomBridge.active
-		? resolveSubagentIntercomTarget(input.event.runId, input.event.agent, input.event.index)
-		: undefined;
+	const childIntercomTarget = input.intercomBridge.active ? resolveSubagentIntercomTarget(input.event.runId, input.event.agent, input.event.index) : undefined;
 	const payload = {
 		event: input.event,
 		source: "foreground" as const,
@@ -568,7 +620,12 @@ function emitControlNotification(input: {
 	if (input.controlConfig.notifyChannels.includes("event")) {
 		input.pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
 	}
-	if (input.event.type !== "active_long_running" && input.controlConfig.notifyChannels.includes("intercom") && input.intercomBridge.active && input.intercomBridge.orchestratorTarget) {
+	if (
+		input.event.type !== "active_long_running" &&
+		input.controlConfig.notifyChannels.includes("intercom") &&
+		input.intercomBridge.active &&
+		input.intercomBridge.orchestratorTarget
+	) {
 		input.pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
 			...payload,
 			to: input.intercomBridge.orchestratorTarget,
@@ -728,12 +785,7 @@ function duplicateNames(names: string[]): string[] {
 	return [...duplicates];
 }
 
-function appendStepToAsyncChain(input: {
-	params: SubagentParamsLike;
-	requestCwd: string;
-	ctx: ExtensionContext;
-	deps: ExecutorDeps;
-}): AgentToolResult<Details> {
+function appendStepToAsyncChain(input: { params: SubagentParamsLike; requestCwd: string; ctx: ExtensionContext; deps: ExecutorDeps }): AgentToolResult<Details> {
 	const targetRunId = input.params.id ?? input.params.runId;
 	if (!targetRunId) {
 		return {
@@ -818,10 +870,14 @@ function appendStepToAsyncChain(input: {
 		...pendingAppendRequests.flatMap((request) => runnerStepOutputNames(request.steps)),
 	]);
 	try {
-		validateChainOutputBindingsWithContext(input.params.chain, { maxItems: input.deps.config.chain?.dynamicFanout?.maxItems }, {
-			priorOutputNames: reservedOutputNames,
-			startStepIndex: status.chainStepCount ?? status.steps?.length ?? 0,
-		});
+		validateChainOutputBindingsWithContext(
+			input.params.chain,
+			{ maxItems: input.deps.config.chain?.dynamicFanout?.maxItems },
+			{
+				priorOutputNames: reservedOutputNames,
+				startStepIndex: status.chainStepCount ?? status.steps?.length ?? 0,
+			},
+		);
 	} catch (error) {
 		if (!(error instanceof ChainOutputValidationError)) throw error;
 		return {
@@ -894,10 +950,12 @@ function appendStepToAsyncChain(input: {
 		});
 		const stepText = built.steps.length === 1 ? "step" : "steps";
 		return {
-			content: [{
-				type: "text",
-				text: `Append queued for chain run ${resolved.id}: ${built.steps.length} ${stepText}. It becomes eligible after the chain's already-queued steps finish. Pending appends: ${result.pendingCount}.`,
-			}],
+			content: [
+				{
+					type: "text",
+					text: `Append queued for chain run ${resolved.id}: ${built.steps.length} ${stepText}. It becomes eligible after the chain's already-queued steps finish. Pending appends: ${result.pendingCount}.`,
+				},
+			],
 			details: { mode: "management", results: [], asyncId: resolved.id, asyncDir: resolved.location.asyncDir },
 		};
 	} catch (error) {
@@ -934,9 +992,7 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	const stat = fs.lstatSync(resolved);
 	if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Nested run '${run.id}' session file is not a regular file: ${sessionFile}`);
 	const realSessionFile = fs.realpathSync(resolved);
-	const trustedRoots = trustedSessionRoots
-		.filter((root) => fs.existsSync(root))
-		.map((root) => fs.realpathSync(root));
+	const trustedRoots = trustedSessionRoots.filter((root) => fs.existsSync(root)).map((root) => fs.realpathSync(root));
 	if (!trustedRoots.some((root) => pathWithin(root, realSessionFile))) {
 		throw new Error(`Nested run '${run.id}' session file is outside trusted nested session roots: ${sessionFile}`);
 	}
@@ -1012,49 +1068,76 @@ function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & { kind:
 	if (!status || (status.state !== "running" && status.state !== "queued")) return undefined;
 	const steps = status.steps ?? [];
 	if (input.index !== undefined) {
-		if (input.index < 0 || input.index >= steps.length) return { content: [{ type: "text", text: `Nested async run ${run.id} has ${steps.length} children. Index ${input.index} is out of range.` }], isError: true, details: { mode: "management", results: [] } };
+		if (input.index < 0 || input.index >= steps.length)
+			return {
+				content: [{ type: "text", text: `Nested async run ${run.id} has ${steps.length} children. Index ${input.index} is out of range.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
 		const step = steps[input.index];
-		if (step && step.status !== "running" && step.status !== "pending") return { content: [{ type: "text", text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+		if (step && step.status !== "running" && step.status !== "pending")
+			return {
+				content: [{ type: "text", text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
 	}
 	requestAsyncSteer(asyncDir, { message: input.message, targetIndex: input.index, source: "nested-steer" });
-	return { content: [{ type: "text", text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.` }], details: { mode: "management", results: [] } };
+	return {
+		content: [{ type: "text", text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.` }],
+		details: { mode: "management", results: [] },
+	};
 }
 
 async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "nested" }): Promise<AgentToolResult<Details>> {
 	const run = target.match.run;
-	if (run.state === "complete") return { content: [{ type: "text", text: `Nested run ${run.id} is already complete and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
-	if (run.state === "failed") return { content: [{ type: "text", text: `Nested run ${run.id} has failed and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
+	if (run.state === "complete")
+		return {
+			content: [{ type: "text", text: `Nested run ${run.id} is already complete and cannot be interrupted.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	if (run.state === "failed")
+		return { content: [{ type: "text", text: `Nested run ${run.id} has failed and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
 	if (run.state === "paused") return { content: [{ type: "text", text: `Nested run ${run.id} is already paused.` }], isError: true, details: { mode: "management", results: [] } };
 	const result = await sendNestedControlRequest(target, "interrupt");
 	if (result) return { content: [{ type: "text", text: result.message }], isError: result.ok ? undefined : true, details: { mode: "management", results: [] } };
 	const direct = directNestedAsyncInterrupt(target);
 	if (direct) return direct;
-	return { content: [{ type: "text", text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.` }], isError: true, details: { mode: "management", results: [] } };
+	return {
+		content: [{ type: "text", text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.` }],
+		isError: true,
+		details: { mode: "management", results: [] },
+	};
 }
 
 async function resumeLiveNestedRun(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string }): Promise<AgentToolResult<Details>> {
 	const run = input.target.match.run;
 	const result = await sendNestedControlRequest(input.target, "resume", input.message);
 	if (result) return { content: [{ type: "text", text: result.message }], isError: result.ok ? undefined : true, details: { mode: "management", results: [] } };
-	return { content: [{ type: "text", text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
+	return {
+		content: [{ type: "text", text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.` }],
+		isError: true,
+		details: { mode: "management", results: [] },
+	};
 }
 
 function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number }): AgentToolResult<Details> {
 	const run = input.target.match.run;
-	if (run.state !== "running" && run.state !== "queued") return { content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+	if (run.state !== "running" && run.state !== "queued")
+		return { content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
 	const direct = directNestedAsyncSteer(input);
 	if (direct) return direct;
-	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
+	return {
+		content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }],
+		isError: true,
+		details: { mode: "management", results: [] },
+	};
 }
 
-async function resumeAsyncRun(input: {
-	params: SubagentParamsLike;
-	requestCwd: string;
-	ctx: ExtensionContext;
-	deps: ExecutorDeps;
-}): Promise<AgentToolResult<Details>> {
+async function resumeAsyncRun(input: { params: SubagentParamsLike; requestCwd: string; ctx: ExtensionContext; deps: ExecutorDeps }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
-	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
+	const attachChain = (input.params.chain?.length ?? 0) > 0 ? (input.params.chain as ChainStep[]) : undefined;
 	if (!followUp && !attachChain) {
 		return {
 			content: [{ type: "text", text: "action='resume' requires message." }],
@@ -1131,12 +1214,24 @@ async function resumeAsyncRun(input: {
 		);
 		if (delivered) {
 			return {
-				content: [{ type: "text", text: [`Interrupted live async child, then delivered follow-up.`, `Run: ${target.runId}`, `Intercom target: ${target.intercomTarget}`].join("\n") }],
+				content: [
+					{ type: "text", text: [`Interrupted live async child, then delivered follow-up.`, `Run: ${target.runId}`, `Intercom target: ${target.intercomTarget}`].join("\n") },
+				],
 				details: { mode: "management", results: [] },
 			};
 		}
 		return {
-			content: [{ type: "text", text: [`Async child appears live but its intercom target is not registered.`, `Run: ${target.runId}`, `Intercom target: ${target.intercomTarget}`, `Wait for completion, then retry action='resume'.`].join("\n") }],
+			content: [
+				{
+					type: "text",
+					text: [
+						`Async child appears live but its intercom target is not registered.`,
+						`Run: ${target.runId}`,
+						`Intercom target: ${target.intercomTarget}`,
+						`Wait for completion, then retry action='resume'.`,
+					].join("\n"),
+				},
+			],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -1163,9 +1258,7 @@ async function resumeAsyncRun(input: {
 		context: input.params.context,
 		orchestratorTarget: sessionName,
 	});
-	const agents = intercomBridge.active
-		? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
-		: discoveredAgents;
+	const agents = intercomBridge.active ? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge)) : discoveredAgents;
 	const agentConfig = agents.find((agent) => agent.name === target.agent);
 	if (!agentConfig) {
 		return {
@@ -1185,7 +1278,12 @@ async function resumeAsyncRun(input: {
 		}
 		if (!isAsyncAvailable()) {
 			return {
-				content: [{ type: "text", text: "Async mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+				content: [
+					{
+						type: "text",
+						text: "Async mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed.",
+					},
+				],
 				isError: true,
 				details: { mode: "chain", results: [] },
 			};
@@ -1332,12 +1430,13 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 }
 
 function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge">, deps: Pick<ExecutorDeps, "pi">): (event: ControlEvent) => void {
-	return (event) => emitControlNotification({
-		pi: deps.pi,
-		controlConfig: data.controlConfig,
-		intercomBridge: data.intercomBridge,
-		event,
-	});
+	return (event) =>
+		emitControlNotification({
+			pi: deps.pi,
+			controlConfig: data.controlConfig,
+			intercomBridge: data.intercomBridge,
+			event,
+		});
 }
 
 async function emitForegroundResultIntercom(input: {
@@ -1350,19 +1449,25 @@ async function emitForegroundResultIntercom(input: {
 	nestedChildren?: NestedRunSummary[];
 }): Promise<ReturnType<typeof buildSubagentResultIntercomPayload> | null> {
 	if (!input.intercomBridge.active || !input.intercomBridge.orchestratorTarget) return null;
-	const children = input.results.flatMap((result, index) => result.detached ? [] : [{
-		agent: result.agent,
-		status: resolveSubagentResultStatus({
-			exitCode: result.exitCode,
-			interrupted: result.interrupted,
-			detached: result.detached,
-		}),
-		summary: resultSummaryForIntercom(result),
-		index,
-		artifactPath: result.artifactPaths?.outputPath,
-		sessionPath: result.sessionFile,
-		intercomTarget: resolveSubagentIntercomTarget(input.runId, result.agent, index),
-	}]);
+	const children = input.results.flatMap((result, index) =>
+		result.detached
+			? []
+			: [
+					{
+						agent: result.agent,
+						status: resolveSubagentResultStatus({
+							exitCode: result.exitCode,
+							interrupted: result.interrupted,
+							detached: result.detached,
+						}),
+						summary: resultSummaryForIntercom(result),
+						index,
+						artifactPath: result.artifactPaths?.outputPath,
+						sessionPath: result.sessionFile,
+						intercomTarget: resolveSubagentIntercomTarget(input.runId, result.agent, index),
+					},
+				],
+	);
 	if (children.length === 0) return null;
 	const payload = buildSubagentResultIntercomPayload({
 		to: input.intercomBridge.orchestratorTarget,
@@ -1543,8 +1648,7 @@ function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: Ag
 		return resolveExplicitContextPolicy(params);
 	}
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
-	const contextForAgent = (agentName: string): "fresh" | "fork" =>
-		byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
+	const contextForAgent = (agentName: string): "fresh" | "fork" => (byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh");
 	const usesFork = collectRequestedAgentNames(params).some((name) => contextForAgent(name) === "fork");
 	return {
 		params: usesFork ? { ...params, context: "fork" } : params,
@@ -1592,15 +1696,9 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	return {
 		...params,
 		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
-		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
-			? { timeoutMs: agent.defaultTimeoutMs }
-			: {}),
-		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
-			? { turnBudget: agent.defaultTurnBudget }
-			: {}),
-		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined
-			? { acceptance: agent.defaultAcceptance }
-			: {}),
+		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined ? { timeoutMs: agent.defaultTimeoutMs } : {}),
+		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined ? { turnBudget: agent.defaultTurnBudget } : {}),
+		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined ? { acceptance: agent.defaultAcceptance } : {}),
 	};
 }
 
@@ -1608,7 +1706,10 @@ function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: num
 	const rawTimeout = params.timeoutMs;
 	const rawMaxRuntime = params.maxRuntimeMs;
 	if (rawTimeout === undefined && rawMaxRuntime === undefined) return {};
-	for (const [name, value] of [["timeoutMs", rawTimeout], ["maxRuntimeMs", rawMaxRuntime]] as const) {
+	for (const [name, value] of [
+		["timeoutMs", rawTimeout],
+		["maxRuntimeMs", rawMaxRuntime],
+	] as const) {
 		if (value === undefined) continue;
 		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
 			return { error: `${name} must be a positive integer.` };
@@ -1625,7 +1726,10 @@ function resolveToolBudget(raw: unknown, label = "toolBudget"): { toolBudget?: R
 	return { toolBudget: resolved.budget, error: resolved.error };
 }
 
-function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
+function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): {
+	toolBudget?: ResolvedToolBudget;
+	error?: string;
+} {
 	if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
 	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
 	if (input.agentBudget !== undefined) return resolveToolBudget(input.agentBudget, "agent.toolBudget");
@@ -1691,10 +1795,7 @@ function normalizeRepeatedParallelCounts(params: SubagentParamsLike): { params?:
 	return { params };
 }
 
-function withForkContext(
-	result: AgentToolResult<Details>,
-	context: SubagentParamsLike["context"],
-): AgentToolResult<Details> {
+function withForkContext(result: AgentToolResult<Details>, context: SubagentParamsLike["context"]): AgentToolResult<Details> {
 	if (context !== "fork" || !result.details) return result;
 	return {
 		...result,
@@ -1806,9 +1907,7 @@ function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultCo
 				...step,
 				parallel: step.parallel.map((task) => ({
 					...task,
-					task: shouldForkAgent(contextPolicy, task.agent)
-						? wrapForkTask(task.task ?? "{previous}")
-						: task.task,
+					task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task ?? "{previous}") : task.task,
 				})),
 			};
 		}
@@ -1817,18 +1916,14 @@ function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultCo
 				...step,
 				parallel: {
 					...step.parallel,
-					task: shouldForkAgent(contextPolicy, step.parallel.agent)
-						? wrapForkTask(step.parallel.task ?? "{previous}")
-						: step.parallel.task,
+					task: shouldForkAgent(contextPolicy, step.parallel.agent) ? wrapForkTask(step.parallel.task ?? "{previous}") : step.parallel.task,
 				},
 			};
 		}
 		const sequential = step as SequentialStep;
 		return {
 			...sequential,
-			task: shouldForkAgent(contextPolicy, sequential.agent)
-				? wrapForkTask(sequential.task ?? (stepIndex === 0 ? "{task}" : "{previous}"))
-				: sequential.task,
+			task: shouldForkAgent(contextPolicy, sequential.agent) ? wrapForkTask(sequential.task ?? (stepIndex === 0 ? "{task}" : "{previous}")) : sequential.task,
 		};
 	});
 }
@@ -1922,7 +2017,9 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 
 	if (!isAsyncAvailable()) {
 		return {
-			content: [{ type: "text", text: "Async mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+			content: [
+				{ type: "text", text: "Async mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." },
+			],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
 		};
@@ -1946,7 +2043,10 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	if (hasTasks && params.tasks) {
 		const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
 		const modelOverrides = params.tasks.map((task, index) =>
-			resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: task.model ? "explicit" : "inherited" }),
+			resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, availableModels, currentProvider, {
+				scope: data.modelScope,
+				source: task.model ? "explicit" : "inherited",
+			}),
 		);
 		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
 		const parallelTasks = params.tasks.map((task, index) => ({
@@ -1963,11 +2063,13 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
 		}));
 		return executeAsyncChain(id, {
-			chain: [{
-				parallel: parallelTasks,
-				concurrency: resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency),
-				worktree: params.worktree,
-			}],
+			chain: [
+				{
+					parallel: parallelTasks,
+					concurrency: resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency),
+					worktree: params.worktree,
+				},
+			],
 			resultMode: "parallel",
 			goal: params.tasks[0]?.task ?? "",
 			agents,
@@ -2051,7 +2153,10 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const modelOverride = resolveSubagentModelOverride((params.model as string | undefined) ?? a.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: (params.model as string | undefined) ? "explicit" : "inherited" });
+		const modelOverride = resolveSubagentModelOverride((params.model as string | undefined) ?? a.model, ctx.model, availableModels, currentProvider, {
+			scope: data.modelScope,
+			source: (params.model as string | undefined) ? "explicit" : "inherited",
+		});
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
@@ -2154,7 +2259,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		timeoutMs: data.timeoutMs,
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
-		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events }),
+		onDetachedExit: (index, result) =>
+			updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events }),
 		toolBudget: data.toolBudget,
 		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -2163,7 +2269,12 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	if (chainResult.requestedAsync) {
 		if (!isAsyncAvailable()) {
 			return {
-				content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+				content: [
+					{
+						type: "text",
+						text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed.",
+					},
+				],
 				isError: true,
 				details: { mode: "chain" as const, results: [] },
 			};
@@ -2222,16 +2333,17 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	}
 	const chainDetails = rawChainDetails ? compactForegroundDetails(rawChainDetails) : undefined;
 	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, results: chainDetails.results });
-	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
-		? await maybeBuildForegroundIntercomReceipt({
-			pi: deps.pi,
-			intercomBridge: data.intercomBridge,
-			runId,
-			mode: "chain",
-			details: chainDetails,
-			...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
-		})
-		: null;
+	const intercomReceipt =
+		chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
+			? await maybeBuildForegroundIntercomReceipt({
+					pi: deps.pi,
+					intercomBridge: data.intercomBridge,
+					runId,
+					mode: "chain",
+					details: chainDetails,
+					...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
+				})
+			: null;
 	if (intercomReceipt) {
 		return {
 			...chainResult,
@@ -2309,9 +2421,7 @@ function createParallelWorktreeSetup(
 		return {
 			setup: createWorktrees(cwd, runId, tasks.length, {
 				agents: tasks.map((task) => task.agent),
-				setupHook: setupHook
-					? { hookPath: setupHook, timeoutMs: setupHookTimeoutMs }
-					: undefined,
+				setupHook: setupHook ? { hookPath: setupHook, timeoutMs: setupHookTimeoutMs } : undefined,
 				baseDir,
 			}),
 		};
@@ -2321,19 +2431,14 @@ function createParallelWorktreeSetup(
 	}
 }
 
-function buildParallelWorktreeTaskCwdError(
-	tasks: ReadonlyArray<{ agent: string; cwd?: string }>,
-	sharedCwd: string,
-): string | undefined {
+function buildParallelWorktreeTaskCwdError(tasks: ReadonlyArray<{ agent: string; cwd?: string }>, sharedCwd: string): string | undefined {
 	const conflict = findWorktreeTaskCwdConflict(tasks, sharedCwd);
 	if (!conflict) return undefined;
 	return formatWorktreeTaskCwdConflict(conflict, sharedCwd);
 }
 
 function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
-	return deps.config.singleRunOutputBaseDir
-		? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir))
-		: path.join(artifactsDir, "outputs", runId);
+	return deps.config.singleRunOutputBaseDir ? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir)) : path.join(artifactsDir, "outputs", runId);
 }
 
 function buildChainWorktreeTaskCwdError(chain: ChainStep[], sharedCwd: string): string | undefined {
@@ -2349,24 +2454,19 @@ function buildChainWorktreeTaskCwdError(chain: ChainStep[], sharedCwd: string): 
 	return undefined;
 }
 
-function resolveParallelTaskCwd(
-	task: TaskParam,
-	paramsCwd: string,
-	worktreeSetup: WorktreeSetup | undefined,
-	index: number,
-): string {
+function resolveParallelTaskCwd(task: TaskParam, paramsCwd: string, worktreeSetup: WorktreeSetup | undefined, index: number): string {
 	if (worktreeSetup) return worktreeSetup.worktrees[index]!.agentCwd;
 	return resolveChildCwd(paramsCwd, task.cwd);
 }
 
-function buildParallelWorktreeSuffix(
-	worktreeSetup: WorktreeSetup | undefined,
-	artifactsDir: string,
-	tasks: TaskParam[],
-): string {
+function buildParallelWorktreeSuffix(worktreeSetup: WorktreeSetup | undefined, artifactsDir: string, tasks: TaskParam[]): string {
 	if (!worktreeSetup) return "";
 	const diffsDir = path.join(artifactsDir, "worktree-diffs");
-	const diffs = diffWorktrees(worktreeSetup, tasks.map((task) => task.agent), diffsDir);
+	const diffs = diffWorktrees(
+		worktreeSetup,
+		tasks.map((task) => task.agent),
+		diffsDir,
+	);
 	return formatWorktreeDiffSummary(diffs);
 }
 
@@ -2402,114 +2502,122 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 	for (let i = 0; i < input.tasks.length; i++) {
 		input.sessionFileForIndex(i);
 	}
-	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
-		const behavior = input.behaviors[index];
-		const effectiveSkills = behavior?.skills;
-		const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);
-		const readInstructions = behavior
-			? buildChainInstructions({ ...behavior, output: false, progress: false }, taskCwd, false)
-			: { prefix: "", suffix: "" };
-		const progressInstructions = behavior
-			? buildChainInstructions({ ...behavior, output: false, reads: false }, input.progressDir, index === input.firstProgressIndex)
-			: { prefix: "", suffix: "" };
-		const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd, input.outputBaseDir);
-		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
-		const taskText = injectSingleOutputInstruction(
-			`${readInstructions.prefix}${input.taskTexts[index]!}${progressInstructions.suffix}`,
-			outputPath,
-			agentConfig,
-		);
-		const interruptController = new AbortController();
-		if (input.foregroundControl) {
-			input.foregroundControl.currentAgent = task.agent;
-			input.foregroundControl.currentIndex = index;
-			input.foregroundControl.currentActivityState = undefined;
-			input.foregroundControl.updatedAt = Date.now();
-			input.foregroundControl.interrupt = () => {
-				if (interruptController.signal.aborted) return false;
-				interruptController.abort();
-				input.foregroundControl!.currentActivityState = undefined;
-				input.foregroundControl!.updatedAt = Date.now();
-				return true;
-			};
-		}
-		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
-			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
-			cwd: taskCwd,
-			signal: input.signal,
-			interruptSignal: interruptController.signal,
-			allowIntercomDetach: agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-			intercomEvents: input.intercomEvents,
-			runId: input.runId,
-			index,
-			sessionDir: input.sessionDirForIndex(index),
-			sessionFile: input.sessionFileForTask(task.agent, index),
-			share: input.shareEnabled,
-			artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
-			artifactConfig: input.artifactConfig,
-			maxOutput: input.maxOutput,
-			outputPath,
-			outputMode: behavior?.outputMode,
-			maxSubagentDepth: input.maxSubagentDepths[index],
-			controlConfig: input.controlConfig,
-			onControlEvent: input.onControlEvent,
-			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents }),
-			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
-			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
-			nestedRoute: input.foregroundControl?.nestedRoute,
-			modelOverride: input.modelOverrides[index],
-			thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
-			availableModels: input.availableModels,
-			preferredModelProvider: input.ctx.model?.provider,
-			modelScope: input.modelScope,
-			skills: effectiveSkills === false ? [] : effectiveSkills,
-			acceptance: task.acceptance,
-			acceptanceContext: { mode: "parallel" },
-			timeoutMs: input.timeoutMs,
-			deadlineAt: input.deadlineAt,
-			turnBudget: input.turnBudget,
-			toolBudget: input.toolBudgets[index],
-			onUpdate: input.onUpdate
-				? (progressUpdate) => {
-					const stepResults = progressUpdate.details?.results || [];
-					const stepProgress = progressUpdate.details?.progress || [];
-					if (input.foregroundControl && stepProgress.length > 0) {
-						const current = stepProgress[0];
-						input.foregroundControl.currentAgent = task.agent;
-						input.foregroundControl.currentIndex = index;
-						input.foregroundControl.currentActivityState = current?.activityState;
-						input.foregroundControl.lastActivityAt = current?.lastActivityAt;
-						input.foregroundControl.currentTool = current?.currentTool;
-						input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-						input.foregroundControl.currentPath = current?.currentPath;
-						input.foregroundControl.turnCount = current?.turnCount;
-						input.foregroundControl.tokens = current?.tokens;
-						input.foregroundControl.toolCount = current?.toolCount;
-						input.foregroundControl.updatedAt = Date.now();
-					}
-					if (stepResults.length > 0) input.liveResults[index] = stepResults[0];
-					if (stepProgress.length > 0) input.liveProgress[index] = stepProgress[0];
-					const mergedResults = input.liveResults.filter((result): result is SingleResult => result !== undefined);
-					const mergedProgress = input.liveProgress.filter((progress): progress is AgentProgress => progress !== undefined);
-					input.onUpdate?.({
-						content: progressUpdate.content,
-						details: {
-							mode: "parallel",
-							results: mergedResults,
-							progress: mergedProgress,
-							controlEvents: progressUpdate.details?.controlEvents,
-							totalSteps: input.tasks.length,
-						},
-					});
-				}
-				: undefined,
-		}).finally(() => {
-			if (input.foregroundControl?.currentIndex === index) {
-				input.foregroundControl.interrupt = undefined;
+	return mapConcurrent(
+		input.tasks,
+		input.concurrencyLimit,
+		async (task, index) => {
+			const behavior = input.behaviors[index];
+			const effectiveSkills = behavior?.skills;
+			const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);
+			const readInstructions = behavior ? buildChainInstructions({ ...behavior, output: false, progress: false }, taskCwd, false) : { prefix: "", suffix: "" };
+			const progressInstructions = behavior
+				? buildChainInstructions({ ...behavior, output: false, reads: false }, input.progressDir, index === input.firstProgressIndex)
+				: { prefix: "", suffix: "" };
+			const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd, input.outputBaseDir);
+			const agentConfig = input.agents.find((agent) => agent.name === task.agent);
+			const taskText = injectSingleOutputInstruction(`${readInstructions.prefix}${input.taskTexts[index]!}${progressInstructions.suffix}`, outputPath, agentConfig);
+			const interruptController = new AbortController();
+			if (input.foregroundControl) {
+				input.foregroundControl.currentAgent = task.agent;
+				input.foregroundControl.currentIndex = index;
+				input.foregroundControl.currentActivityState = undefined;
 				input.foregroundControl.updatedAt = Date.now();
+				input.foregroundControl.interrupt = () => {
+					if (interruptController.signal.aborted) return false;
+					interruptController.abort();
+					input.foregroundControl!.currentActivityState = undefined;
+					input.foregroundControl!.updatedAt = Date.now();
+					return true;
+				};
 			}
-		});
-	}, input.globalSemaphore);
+			return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
+				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				cwd: taskCwd,
+				signal: input.signal,
+				interruptSignal: interruptController.signal,
+				allowIntercomDetach: agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+				intercomEvents: input.intercomEvents,
+				runId: input.runId,
+				index,
+				sessionDir: input.sessionDirForIndex(index),
+				sessionFile: input.sessionFileForTask(task.agent, index),
+				share: input.shareEnabled,
+				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
+				artifactConfig: input.artifactConfig,
+				maxOutput: input.maxOutput,
+				outputPath,
+				outputMode: behavior?.outputMode,
+				maxSubagentDepth: input.maxSubagentDepths[index],
+				controlConfig: input.controlConfig,
+				onControlEvent: input.onControlEvent,
+				onDetachedExit: (result) =>
+					updateRememberedForegroundChild(input.state, {
+						runId: input.runId,
+						mode: "parallel",
+						cwd: taskCwd,
+						sessionId: input.parentSessionId,
+						index,
+						result,
+						events: input.intercomEvents,
+					}),
+				intercomSessionName: input.childIntercomTarget?.(task.agent, index),
+				orchestratorIntercomTarget: input.orchestratorIntercomTarget,
+				nestedRoute: input.foregroundControl?.nestedRoute,
+				modelOverride: input.modelOverrides[index],
+				thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
+				availableModels: input.availableModels,
+				preferredModelProvider: input.ctx.model?.provider,
+				modelScope: input.modelScope,
+				skills: effectiveSkills === false ? [] : effectiveSkills,
+				acceptance: task.acceptance,
+				acceptanceContext: { mode: "parallel" },
+				timeoutMs: input.timeoutMs,
+				deadlineAt: input.deadlineAt,
+				turnBudget: input.turnBudget,
+				toolBudget: input.toolBudgets[index],
+				onUpdate: input.onUpdate
+					? (progressUpdate) => {
+							const stepResults = progressUpdate.details?.results || [];
+							const stepProgress = progressUpdate.details?.progress || [];
+							if (input.foregroundControl && stepProgress.length > 0) {
+								const current = stepProgress[0];
+								input.foregroundControl.currentAgent = task.agent;
+								input.foregroundControl.currentIndex = index;
+								input.foregroundControl.currentActivityState = current?.activityState;
+								input.foregroundControl.lastActivityAt = current?.lastActivityAt;
+								input.foregroundControl.currentTool = current?.currentTool;
+								input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
+								input.foregroundControl.currentPath = current?.currentPath;
+								input.foregroundControl.turnCount = current?.turnCount;
+								input.foregroundControl.tokens = current?.tokens;
+								input.foregroundControl.toolCount = current?.toolCount;
+								input.foregroundControl.updatedAt = Date.now();
+							}
+							if (stepResults.length > 0) input.liveResults[index] = stepResults[0];
+							if (stepProgress.length > 0) input.liveProgress[index] = stepProgress[0];
+							const mergedResults = input.liveResults.filter((result): result is SingleResult => result !== undefined);
+							const mergedProgress = input.liveProgress.filter((progress): progress is AgentProgress => progress !== undefined);
+							input.onUpdate?.({
+								content: progressUpdate.content,
+								details: {
+									mode: "parallel",
+									results: mergedResults,
+									progress: mergedProgress,
+									controlEvents: progressUpdate.details?.controlEvents,
+									totalSteps: input.tasks.length,
+								},
+							});
+						}
+					: undefined,
+			}).finally(() => {
+				if (input.foregroundControl?.currentIndex === index) {
+					input.foregroundControl.interrupt = undefined;
+					input.foregroundControl.updatedAt = Date.now();
+				}
+			});
+		},
+		input.globalSemaphore,
+	);
 }
 
 async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
@@ -2562,12 +2670,15 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	}
 
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
-	const maxSubagentDepths = agentConfigs.map((config) =>
-		resolveChildMaxSubagentDepth(currentMaxSubagentDepth, config.maxSubagentDepth),
-	);
+	const maxSubagentDepths = agentConfigs.map((config) => resolveChildMaxSubagentDepth(currentMaxSubagentDepth, config.maxSubagentDepth));
 	const toolBudgets: (ResolvedToolBudget | undefined)[] = [];
 	for (let index = 0; index < tasks.length; index++) {
-		const resolved = resolveEffectiveToolBudget({ stepBudget: tasks[index]?.toolBudget, runBudget: data.toolBudget, agentBudget: agentConfigs[index]?.toolBudget, configBudget: data.configToolBudget });
+		const resolved = resolveEffectiveToolBudget({
+			stepBudget: tasks[index]?.toolBudget,
+			runBudget: data.toolBudget,
+			agentBudget: agentConfigs[index]?.toolBudget,
+			configBudget: data.configToolBudget,
+		});
 		if (resolved.error) return buildParallelModeError(resolved.error);
 		toolBudgets.push(resolved.toolBudget);
 	}
@@ -2580,9 +2691,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let taskTexts = tasks.map((t) => t.task);
-	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) =>
-		normalizeSkillInput(t.skill),
-	);
+	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) => normalizeSkillInput(t.skill));
 	const behaviorOverrides: StepOverrides[] = tasks.map((task, index) => ({
 		...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
 		...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
@@ -2592,30 +2701,19 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(task.model ? { model: task.model } : {}),
 	}));
 	const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
-		resolveSubagentModelOverride(behaviorOverrides[i]?.model ?? agentConfigs[i]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: behaviorOverrides[i]?.model ? "explicit" : "inherited" }),
+		resolveSubagentModelOverride(behaviorOverrides[i]?.model ?? agentConfigs[i]?.model, ctx.model, availableModels, currentProvider, {
+			scope: data.modelScope,
+			source: behaviorOverrides[i]?.model ? "explicit" : "inherited",
+		}),
 	);
 
 	if (params.clarify === true && ctx.hasUI) {
-		const behaviors = agentConfigs.map((c, i) =>
-			resolveStepBehavior(c, behaviorOverrides[i]!),
-		);
+		const behaviors = agentConfigs.map((c, i) => resolveStepBehavior(c, behaviorOverrides[i]!));
 		const availableSkills = discoverAvailableSkills(effectiveCwd);
 
 		const result = await ctx.ui.custom<ChainClarifyResult>(
 			(tui, theme, _kb, done) =>
-				new ChainClarifyComponent(
-					tui, theme,
-					agentConfigs,
-					taskTexts,
-					"",
-					undefined,
-					behaviors,
-					availableModels,
-					currentProvider,
-					availableSkills,
-					done,
-					"parallel",
-				),
+				new ChainClarifyComponent(tui, theme, agentConfigs, taskTexts, "", undefined, behaviors, availableModels, currentProvider, availableSkills, done, "parallel"),
 			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 		);
 
@@ -2642,7 +2740,12 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		if (result.runInBackground) {
 			if (!isAsyncAvailable()) {
 				return {
-					content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+					content: [
+						{
+							type: "text",
+							text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed.",
+						},
+					],
 					isError: true,
 					details: { mode: "parallel" as const, results: [] },
 				};
@@ -2825,7 +2928,12 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const detached = detachedIndex >= 0 ? results[detachedIndex] : undefined;
 		if (detached) {
 			return {
-				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
+				content: [
+					{
+						type: "text",
+						text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`,
+					},
+				],
 				details,
 			};
 		}
@@ -2861,9 +2969,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		);
 
 		const summary = `${ok}/${results.length} succeeded${downgradeNote}`;
-		const fullContent = worktreeSuffix
-			? `${summary}\n\n${aggregatedOutput}\n\n${worktreeSuffix}`
-			: `${summary}\n\n${aggregatedOutput}`;
+		const fullContent = worktreeSuffix ? `${summary}\n\n${aggregatedOutput}\n\n${worktreeSuffix}` : `${summary}\n\n${aggregatedOutput}`;
 
 		return {
 			content: [{ type: "text", text: fullContent }],
@@ -2911,13 +3017,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
-	let modelOverride: string | undefined = resolveSubagentModelOverride(
-		(params.model as string | undefined) ?? agentConfig.model,
-		ctx.model,
-		availableModels,
-		currentProvider,
-		{ scope: data.modelScope, source: (params.model as string | undefined) ? "explicit" : "inherited" },
-	);
+	let modelOverride: string | undefined = resolveSubagentModelOverride((params.model as string | undefined) ?? agentConfig.model, ctx.model, availableModels, currentProvider, {
+		scope: data.modelScope,
+		source: (params.model as string | undefined) ? "explicit" : "inherited",
+	});
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
@@ -2931,19 +3034,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 		const result = await ctx.ui.custom<ChainClarifyResult>(
 			(tui, theme, _kb, done) =>
-				new ChainClarifyComponent(
-					tui, theme,
-					[agentConfig],
-					[task],
-					task,
-					undefined,
-					[behavior],
-					availableModels,
-					currentProvider,
-					availableSkills,
-					done,
-					"single",
-				),
+				new ChainClarifyComponent(tui, theme, [agentConfig], [task], task, undefined, [behavior], availableModels, currentProvider, availableSkills, done, "single"),
 			{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 		);
 
@@ -2960,7 +3051,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		if (result.runInBackground) {
 			if (!isAsyncAvailable()) {
 				return {
-					content: [{ type: "text", text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed." }],
+					content: [
+						{
+							type: "text",
+							text: "Background mode requires upstream jiti for TypeScript execution but it could not be found. Ensure the pi-subagents package dependencies are installed.",
+						},
+					],
 					isError: true,
 					details: { mode: "single" as const, results: [] },
 				};
@@ -3044,22 +3140,22 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const forwardSingleUpdate = onUpdate
 		? (update: AgentToolResult<Details>) => {
-			if (foregroundControl) {
-				const firstProgress = update.details?.progress?.[0];
-				foregroundControl.currentAgent = params.agent;
-				foregroundControl.currentIndex = firstProgress?.index ?? 0;
-				foregroundControl.currentActivityState = firstProgress?.activityState;
-				foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
-				foregroundControl.currentTool = firstProgress?.currentTool;
-				foregroundControl.currentToolStartedAt = firstProgress?.currentToolStartedAt;
-				foregroundControl.currentPath = firstProgress?.currentPath;
-				foregroundControl.turnCount = firstProgress?.turnCount;
-				foregroundControl.tokens = firstProgress?.tokens;
-				foregroundControl.toolCount = firstProgress?.toolCount;
-				foregroundControl.updatedAt = Date.now();
+				if (foregroundControl) {
+					const firstProgress = update.details?.progress?.[0];
+					foregroundControl.currentAgent = params.agent;
+					foregroundControl.currentIndex = firstProgress?.index ?? 0;
+					foregroundControl.currentActivityState = firstProgress?.activityState;
+					foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
+					foregroundControl.currentTool = firstProgress?.currentTool;
+					foregroundControl.currentToolStartedAt = firstProgress?.currentToolStartedAt;
+					foregroundControl.currentPath = firstProgress?.currentPath;
+					foregroundControl.turnCount = firstProgress?.turnCount;
+					foregroundControl.tokens = firstProgress?.tokens;
+					foregroundControl.toolCount = firstProgress?.toolCount;
+					foregroundControl.updatedAt = Date.now();
+				}
+				onUpdate(update);
 			}
-			onUpdate(update);
-		}
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
@@ -3095,7 +3191,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		skills: effectiveSkills,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },
-		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
+		onDetachedExit: (result) =>
+			updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
 		timeoutMs: data.timeoutMs,
 		deadlineAt,
 		turnBudget: data.turnBudget,
@@ -3168,7 +3265,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	if (r.detached) {
 		return {
-			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
+			content: [
+				{
+					type: "text",
+					text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`,
+				},
+			],
 			details,
 		};
 	}
@@ -3200,10 +3302,12 @@ function inferExecutionMode(params: SubagentParamsLike): SubagentRunMode {
 
 function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResult<Details> {
 	return {
-		content: [{
-			type: "text",
-			text: "Rejected: a subagent call is already in progress. Issue exactly ONE subagent call per turn.",
-		}],
+		content: [
+			{
+				type: "text",
+				text: "Rejected: a subagent call is already in progress. Issue exactly ONE subagent call per turn.",
+			},
+		],
 		isError: true,
 		details: { mode: inferExecutionMode(params), results: [] },
 	};
@@ -3276,21 +3380,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (!sessionError) sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 				}
 				return {
-					content: [{
-						type: "text",
-						text: buildDoctorReport({
-							cwd: requestCwd,
-							config: deps.config,
-							state: deps.state,
-							context: paramsWithResolvedCwd.context,
-							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
-							currentSessionFile,
-							currentSessionId,
-							orchestratorTarget,
-							sessionError,
-							expandTilde: deps.expandTilde,
-						}),
-					}],
+					content: [
+						{
+							type: "text",
+							text: buildDoctorReport({
+								cwd: requestCwd,
+								config: deps.config,
+								state: deps.state,
+								context: paramsWithResolvedCwd.context,
+								requestedSessionDir: paramsWithResolvedCwd.sessionDir,
+								currentSessionFile,
+								currentSessionId,
+								orchestratorTarget,
+								sessionError,
+								expandTilde: deps.expandTilde,
+							}),
+						},
+					],
 					details: { mode: "management", results: [] },
 				};
 			}
@@ -3310,7 +3416,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							if (foreground) {
 								if (paramsWithResolvedCwd.view === "transcript") {
 									return {
-										content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled." }],
+										content: [
+											{
+												type: "text",
+												text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+											},
+										],
 										details: { mode: "management", results: [] },
 									};
 								}
@@ -3326,7 +3437,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (foreground && paramsWithResolvedCwd.view !== "transcript") return foregroundStatusResult(foreground);
 					if (foreground && paramsWithResolvedCwd.view === "transcript") {
 						return {
-							content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript." }],
+							content: [
+								{
+									type: "text",
+									text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+								},
+							],
 							details: { mode: "management", results: [] },
 						};
 					}
@@ -3359,8 +3475,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
 				}
 				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
-				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
-				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+				if (resolved?.kind === "foreground")
+					return {
+						content: [
+							{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." },
+						],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				if (resolved?.kind !== "async")
+					return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
 				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location });
 			}
 			if (action === "append-step") {
@@ -3395,14 +3519,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const message = error instanceof Error ? error.message : String(error);
 					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 				}
-				if (resolved?.kind === "nested") return { content: [{ type: "text", text: "action='stop' supports current-session top-level async runs only." }], isError: true, details: { mode: "management", results: [] } };
-				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='stop' supports async runs only. Use action='interrupt' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
-				const stopResult = stopAsyncRun(
-					deps.state,
-					resolved?.kind === "async" ? resolved.id : targetRunId,
-					deps.kill,
-					resolved?.kind === "async" ? resolved.location : undefined,
-				);
+				if (resolved?.kind === "nested")
+					return {
+						content: [{ type: "text", text: "action='stop' supports current-session top-level async runs only." }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				if (resolved?.kind === "foreground")
+					return {
+						content: [{ type: "text", text: "action='stop' supports async runs only. Use action='interrupt' for foreground runs." }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				const stopResult = stopAsyncRun(deps.state, resolved?.kind === "async" ? resolved.id : targetRunId, deps.kill, resolved?.kind === "async" ? resolved.location : undefined);
 				if (stopResult) return stopResult;
 				return {
 					content: [{ type: "text", text: "No stoppable async run found in this session." }],
@@ -3494,11 +3623,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (normalized.error) return normalized.error;
 		const normalizedParams = normalized.params!;
 
-		let effectiveParams = applyForceTopLevelAsyncOverride(
-			normalizedParams,
-			depth,
-			deps.config.forceTopLevelAsync === true,
-		);
+		let effectiveParams = applyForceTopLevelAsyncOverride(normalizedParams, depth, deps.config.forceTopLevelAsync === true);
 		const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
 		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
 		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
@@ -3524,9 +3649,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			context: effectiveParams.context,
 			orchestratorTarget: sessionName,
 		});
-		const agents = intercomBridge.active
-			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
-			: discoveredAgents;
+		const agents = intercomBridge.active ? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge)) : discoveredAgents;
 		const runId = randomUUID().slice(0, 8);
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
@@ -3535,19 +3658,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const hasChain = (effectiveParams.chain?.length ?? 0) > 0;
 		const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
 		const hasSingle = !hasChain && !hasTasks && Boolean(effectiveParams.agent);
-		const allowClarifyTaskPrompt = hasChain
-			&& effectiveParams.clarify === true
-			&& ctx.hasUI
-			&& !(effectiveParams.chain?.some(isParallelStep) ?? false);
+		const allowClarifyTaskPrompt = hasChain && effectiveParams.clarify === true && ctx.hasUI && !(effectiveParams.chain?.some(isParallelStep) ?? false);
 
-		const validationError = validateExecutionInput(
-			effectiveParams,
-			agents,
-			hasChain,
-			hasTasks,
-			hasSingle,
-			allowClarifyTaskPrompt,
-		);
+		const validationError = validateExecutionInput(effectiveParams, agents, hasChain, hasTasks, hasSingle, allowClarifyTaskPrompt);
 		if (validationError) return validationError;
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
@@ -3574,30 +3687,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (effectiveParams.sessionDir) {
 			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
 		} else {
-			const baseSessionRoot = deps.config.defaultSessionDir
-				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
-				: deps.getSubagentSessionRoot(parentSessionFile);
+			const baseSessionRoot = deps.config.defaultSessionDir ? path.resolve(deps.expandTilde(deps.config.defaultSessionDir)) : deps.getSubagentSessionRoot(parentSessionFile);
 			sessionRoot = path.join(baseSessionRoot, runId);
 		}
 		try {
 			fs.mkdirSync(sessionRoot, { recursive: true });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			return toExecutionErrorResult(
-				effectiveParams,
-				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
-			);
+			return toExecutionErrorResult(effectiveParams, new Error(`Failed to create session directory '${sessionRoot}': ${message}`));
 		}
-		const sessionDirForIndex = (idx?: number) =>
-			path.join(sessionRoot, `run-${idx ?? 0}`);
-		const forkSessionFileForTask = (agentName: string, idx?: number) =>
-			shouldForkAgent(contextPolicy, agentName) ? forkSessionFileForIndex(idx) : undefined;
+		const sessionDirForIndex = (idx?: number) => path.join(sessionRoot, `run-${idx ?? 0}`);
+		const forkSessionFileForTask = (agentName: string, idx?: number) => (shouldForkAgent(contextPolicy, agentName) ? forkSessionFileForIndex(idx) : undefined);
 		const forkThinkingOverrideForTask = (agentName: string, idx?: number) =>
-			shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined;
-		const childSessionFileForTask = (agentName: string, idx?: number) =>
-			forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
-		const childSessionFileForIndex = (idx?: number) =>
-			path.join(sessionDirForIndex(idx), "session.jsonl");
+			effectiveParams.thinking === "inherit"
+				? undefined
+				: (effectiveParams.thinking ?? (shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined));
+		const childSessionFileForTask = (agentName: string, idx?: number) => forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
+		const childSessionFileForIndex = (idx?: number) => path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
 			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
 		} catch (error) {
@@ -3606,9 +3712,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const chainBindingsError = validateExecutionChainBindings(effectiveParams, deps.config.chain?.dynamicFanout?.maxItems);
 		if (chainBindingsError) return chainBindingsError;
 
-		const onUpdateWithContext = onUpdate
-			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
-			: undefined;
+		const onUpdateWithContext = onUpdate ? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context)) : undefined;
 
 		const foregroundMode: "single" | "parallel" | "chain" = hasChain ? "chain" : hasTasks ? "parallel" : "single";
 		const spawnLimitError = reserveSubagentSpawns({
@@ -3653,16 +3757,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const foregroundControl = effectiveAsync
 			? undefined
 			: {
-				runId,
-				mode: foregroundMode,
-				startedAt: Date.now(),
-				updatedAt: Date.now(),
-				currentAgent: undefined,
-				currentIndex: undefined,
-				currentActivityState: undefined,
-				nestedRoute,
-				interrupt: undefined,
-			};
+					runId,
+					mode: foregroundMode,
+					startedAt: Date.now(),
+					updatedAt: Date.now(),
+					currentAgent: undefined,
+					currentIndex: undefined,
+					currentActivityState: undefined,
+					nestedRoute,
+					interrupt: undefined,
+				};
 		if (foregroundControl) {
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
@@ -3672,24 +3776,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (!inheritedNestedRoute || !nestedParentAddress) return;
 			const now = Date.now();
 			const details = result?.details;
-			const state = type === "subagent.nested.started"
-				? "running"
-				: details?.results.some((child) => child.interrupted || child.detached)
-					? "paused"
-					: result?.isError || details?.results.some((child) => child.exitCode !== 0)
-						? "failed"
-						: "complete";
-			const errorText = result?.isError
-				? result.content.find((item) => item.type === "text")?.text
-				: undefined;
-			const agentsForSummary = hasTasks && effectiveParams.tasks
-				? effectiveParams.tasks.map((task) => task.agent)
-				: hasChain && effectiveParams.chain
-					? effectiveParams.chain.flatMap((step) => isParallelStep(step) ? step.parallel.map((task) => task.agent) : [(step as SequentialStep).agent])
-					: effectiveParams.agent ? [effectiveParams.agent] : [];
-			const leafIntercomTarget = intercomBridge.active && agentsForSummary[0]
-				? resolveSubagentIntercomTarget(runId, agentsForSummary[0], 0)
-				: undefined;
+			const state =
+				type === "subagent.nested.started"
+					? "running"
+					: details?.results.some((child) => child.interrupted || child.detached)
+						? "paused"
+						: result?.isError || details?.results.some((child) => child.exitCode !== 0)
+							? "failed"
+							: "complete";
+			const errorText = result?.isError ? result.content.find((item) => item.type === "text")?.text : undefined;
+			const agentsForSummary =
+				hasTasks && effectiveParams.tasks
+					? effectiveParams.tasks.map((task) => task.agent)
+					: hasChain && effectiveParams.chain
+						? effectiveParams.chain.flatMap((step) => (isParallelStep(step) ? step.parallel.map((task) => task.agent) : [(step as SequentialStep).agent]))
+						: effectiveParams.agent
+							? [effectiveParams.agent]
+							: [];
+			const leafIntercomTarget = intercomBridge.active && agentsForSummary[0] ? resolveSubagentIntercomTarget(runId, agentsForSummary[0], 0) : undefined;
 			try {
 				writeNestedEvent(inheritedNestedRoute, {
 					type,
@@ -3715,12 +3819,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						lastUpdate: now,
 						...(details?.totalCost ? { totalCost: details.totalCost } : {}),
 						...(errorText ? { error: errorText } : {}),
-						...(details?.results.length ? { steps: details.results.map((child) => ({
-							agent: child.agent,
-							status: child.interrupted || child.detached ? "paused" : child.exitCode === 0 ? "complete" : "failed",
-							...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
-							...(child.error ? { error: child.error } : {}),
-						})) } : {}),
+						...(details?.results.length
+							? {
+									steps: details.results.map((child) => ({
+										agent: child.agent,
+										status: child.interrupted || child.detached ? "paused" : child.exitCode === 0 ? "complete" : "failed",
+										...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
+										...(child.error ? { error: child.error } : {}),
+									})),
+								}
+							: {}),
 					},
 				});
 			} catch (error) {
@@ -3765,11 +3873,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 		}
 
-		return withForkContext({
-			content: [{ type: "text", text: "Invalid params" }],
-			isError: true,
-			details: { mode: "single" as const, results: [] },
-		}, effectiveParams.context);
+		return withForkContext(
+			{
+				content: [{ type: "text", text: "Invalid params" }],
+				isError: true,
+				details: { mode: "single" as const, results: [] },
+			},
+			effectiveParams.context,
+		);
 	};
 
 	const executeWithSingleDispatchGuard = async (

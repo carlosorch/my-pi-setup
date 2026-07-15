@@ -118,14 +118,14 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 		if (!current || typeof current !== "object") return undefined;
 		current = (current as Record<string, unknown>)[key];
 	}
-	return current && typeof current === "object" ? current as JsonSchemaNode : undefined;
+	return current && typeof current === "object" ? (current as JsonSchemaNode) : undefined;
 }
 
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
 let schemasAvailable = true;
 try {
-	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
+	schemas = (await import("../../src/extension/schemas.ts")) as Record<string, JsonSchemaNode>;
 	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -133,7 +133,7 @@ try {
 }
 let CompileSchema: ((schema: unknown) => { Check(value: unknown): boolean; Errors(value: unknown): Iterable<{ message: string }> }) | undefined;
 try {
-	const compileModule = await import("typebox/compile") as { Compile: typeof CompileSchema };
+	const compileModule = (await import("typebox/compile")) as { Compile: typeof CompileSchema };
 	CompileSchema = compileModule.Compile;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -408,7 +408,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const configSchema = SubagentParams?.properties?.config;
 		assert.ok(configSchema, "config schema should exist");
 		assert.equal(configSchema.type, undefined);
-		assert.equal(anyOfBranches(configSchema).some((branch) => branch.type === "object" && branch.additionalProperties === true), true);
+		assert.equal(
+			anyOfBranches(configSchema).some((branch) => branch.type === "object" && branch.additionalProperties === true),
+			true,
+		);
 		assert.equal(hasAnyOfType(configSchema, "string"), true);
 
 		const acceptanceSchema = SubagentParams?.properties?.acceptance;
@@ -417,7 +420,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
 		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
-		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "attested", "checked", "verified", "reviewed"], "bare \"none\" requires the object form with a reason");
+		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "attested", "checked", "verified", "reviewed"], 'bare "none" requires the object form with a reason');
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
 		assert.equal(acceptanceObjectBranch.additionalProperties, true);
@@ -490,9 +493,20 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ parallel: [{ agent: "reviewer", reads: false, skill: false }] }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", phase: "Review", label: "Security", as: "security", outputSchema: { type: "object" } }] }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", output: "review.md", reads: ["input.md"], skill: "review" }] }] },
-			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } }, collect: { as: "reviews" } }] },
+			{
+				chain: [
+					{
+						expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+						parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+						collect: { as: "reviews" },
+					},
+				],
+			},
 			{ agent: "worker", task: "Fix", acceptance: false },
 			{ agent: "worker", task: "Fix", timeoutMs: 1000 },
+			{ agent: "worker", task: "Fix", thinking: "max" },
+			{ agent: "worker", task: "Fix", thinking: "inherit" },
+			{ agent: "worker", task: "Fix", thinking: false },
 			{ action: "steer", id: "run-1", message: "focus on tests" },
 			{ action: "steer", id: "run-1", index: 0, message: "focus on tests" },
 			{ action: "single", agent: "worker", task: "Fix" },
@@ -507,7 +521,15 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
 			{ chain: [{ agent: "worker", acceptance: { level: "checked" } }] },
 			{ chain: [{ parallel: [{ agent: "worker", acceptance: { level: "verified", verify: [{ id: "unit", command: "npm test" }] } }] }] },
-			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: { level: "checked", review: false } }, collect: { as: "reviews" } }] },
+			{
+				chain: [
+					{
+						expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
+						parallel: { agent: "worker", acceptance: { level: "checked", review: false } },
+						collect: { as: "reviews" },
+					},
+				],
+			},
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1 } },
@@ -525,6 +547,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },
+			{ agent: "worker", task: "Fix", thinking: "turbo" },
 			{ maxRuntimeMs: -1 },
 			{ tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", output: 123 }] }] },
@@ -554,11 +577,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 
 		for (const value of validValues) {
 			assert.doesNotThrow(() => validator.Check(value), `validator should not throw for ${JSON.stringify(value)}`);
-			assert.equal(
-				validator.Check(value),
-				true,
-				`${JSON.stringify(value)} should validate: ${[...validator.Errors(value)].map((error) => error.message).join(", ")}`,
-			);
+			assert.equal(validator.Check(value), true, `${JSON.stringify(value)} should validate: ${[...validator.Errors(value)].map((error) => error.message).join(", ")}`);
 		}
 		for (const value of invalidValues) {
 			assert.equal(validator.Check(value), false, `${JSON.stringify(value)} should not validate`);

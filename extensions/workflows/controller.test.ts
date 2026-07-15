@@ -5,7 +5,7 @@ import { MAX_AGENT_CALLS, RunController } from "./controller.ts";
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-test("RunController reserves calls synchronously and caps global fanout", async () => {
+test("RunController reserves calls synchronously and serializes writer calls", async () => {
   const controller = new RunController(undefined, 4);
   let active = 0;
   let peak = 0;
@@ -22,7 +22,17 @@ test("RunController reserves calls synchronously and caps global fanout", async 
     await Promise.all(tasks),
     Array.from({ length: 12 }, (_, i) => i),
   );
-  assert.equal(peak, 4);
+  assert.equal(peak, 1);
+  assert.equal(await controller.settle(), true);
+});
+
+test("RunController enforces one absolute deadline", async () => {
+  const controller = new RunController(undefined, 1, 20);
+  const initial = controller.remainingMs();
+  await delay(30);
+  assert.ok(initial > 0);
+  assert.equal(controller.remainingMs(), 0);
+  assert.equal(controller.signal.aborted, true);
   assert.equal(await controller.settle(), true);
 });
 

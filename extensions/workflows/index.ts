@@ -17,8 +17,8 @@
  * Runs are blocking by default (live progress in the tool block). Pass
  * `background: true` to return immediately and get a follow-up message when
  * the run finishes. Run artifacts (script, args, statuses, result) are saved
- * under `~/.pi/agent/workflows/<runId>/` for inspection; result and bounded
- * transcripts use separate artifacts, and there is no resume.
+ * under `~/.pi/agent/workflows/<runId>/` for inspection. Results and transcript
+ * availability metadata use separate artifacts, and there is no resume.
  */
 
 import { randomBytes } from "node:crypto";
@@ -69,16 +69,19 @@ import {
   WORKFLOW_TOOL_DESCRIPTION,
 } from "./prompt.ts";
 import {
-  createWorkflowResources,
-  runAgent,
-  type ThinkingLevel,
-  type WorkflowModel,
-} from "./runner.ts";
+  buildWorkflowSpawnParams,
+  SubagentRpcClient,
+  type RpcLifecycle,
+} from "./subagent-rpc.ts";
+
+type WorkflowModel = NonNullable<ExtensionContext["model"]>;
 import { runWorkflowSandbox } from "./sandbox.ts";
 import { safeStringify, writeFileAtomic } from "./serialization.ts";
+import { acquireWriterLease } from "./writer-lease.ts";
 
 const PREVIEW_LENGTH = 200;
 const EMIT_INTERVAL_MS = 120;
+const DEFAULT_WORKFLOW_TIMEOUT_MS = 30 * 60 * 1000;
 
 const THINKING_LEVELS = [
   "off",
@@ -119,6 +122,13 @@ const WorkflowParams = Type.Object({
   background: Type.Optional(
     Type.Boolean({
       description: WORKFLOW_PARAMETER_DESCRIPTIONS.background,
+    }),
+  ),
+  timeoutMs: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 2_147_483_647,
+      description: WORKFLOW_PARAMETER_DESCRIPTIONS.timeoutMs,
     }),
   ),
 });
@@ -406,25 +416,59 @@ export default function workflows(pi: ExtensionAPI) {
         agents: [],
       };
 
-      writeRunFile(runDir, "script.js", params.script);
-      if (params.args !== undefined)
-        writeRunFile(runDir, "args.json", params.args);
-      persistWorkflowJson(runDir, details);
-      const persistence = createWorkflowPersistence(runDir, details);
+      // Acquire before creating run artifacts so lease contention leaves no
+      // orphan workflow that appears to be running.
+      const writerLease = acquireWriterLease(ctx.cwd);
+      let persistence: ReturnType<typeof createWorkflowPersistence>;
+      try {
+        writeRunFile(runDir, "script.js", params.script);
+        if (params.args !== undefined)
+          writeRunFile(runDir, "args.json", params.args);
+        persistWorkflowJson(runDir, details);
+        persistence = createWorkflowPersistence(runDir, details);
+      } catch (error) {
+        writerLease.release();
+        throw error;
+      }
 
+      // Hold one cross-process writer lease for the whole run. Calls inside
+      // the workflow are serialized because the DSL does not expose trusted
+      // parallel-group identity to the parent process.
+      const timeoutMs = params.timeoutMs ?? DEFAULT_WORKFLOW_TIMEOUT_MS;
       // Background runs survive Esc on the parent turn, but all runs are
       // aborted and settled during session shutdown.
-      const controller = new RunController(background ? undefined : signal);
-
-      // Each concurrent child gets its own extension runtime. All children use
-      // the parent cwd and live trust decision.
-      const projectTrusted = ctx.isProjectTrusted();
-      const getResources = (structured: boolean) =>
-        createWorkflowResources(
-          ctx.cwd,
-          structured ? "structured" : "plain",
-          projectTrusted,
+      const controller = new RunController(
+        background ? undefined : signal,
+        1,
+        timeoutMs,
+      );
+      details.timeoutMs = timeoutMs;
+      details.deadlineAt = controller.deadlineAt;
+      const rpc = new SubagentRpcClient(pi.events);
+      const ownedRuns = new Set<string>();
+      const stopOwned = async () => {
+        await Promise.allSettled(
+          [...ownedRuns].map((id) =>
+            rpc.request("stop", { id }, undefined, 5_000),
+          ),
         );
+        const stopDeadline = Date.now() + 5_000;
+        while (ownedRuns.size && Date.now() < stopDeadline) {
+          await Promise.allSettled(
+            [...ownedRuns].map(async (id) => {
+              const status = await rpc.request(
+                "status",
+                { id },
+                undefined,
+                2_000,
+              );
+              if (status?.lifecycle?.result) ownedRuns.delete(id);
+            }),
+          );
+          if (ownedRuns.size)
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      };
 
       // Throttled progress: tool-block updates when blocking. Background
       // runs are covered by the below-editor indicator and /workflows.
@@ -515,7 +559,6 @@ export default function workflows(pi: ExtensionAPI) {
 
         return controller
           .schedule(async (runSignal) => {
-            // Model/provider resolution: default to the parent session's model.
             let model: WorkflowModel | undefined = ctx.model;
             if (opts.model !== undefined || opts.provider !== undefined) {
               const modelOpt =
@@ -526,94 +569,127 @@ export default function workflows(pi: ExtensionAPI) {
                 return fail(
                   `agent "${label}": \`provider\` requires \`model\` as well`,
                 );
-              let resolved: WorkflowModel | undefined;
-              if (providerOpt) {
-                resolved = ctx.modelRegistry.find(providerOpt, modelOpt);
-              } else {
-                const slash = modelOpt.indexOf("/");
-                if (slash > 0) {
-                  resolved = ctx.modelRegistry.find(
-                    modelOpt.slice(0, slash),
-                    modelOpt.slice(slash + 1),
-                  );
-                }
-                resolved ??= ctx.modelRegistry
-                  .getAll()
-                  .find((m) => m.id === modelOpt);
-              }
-              if (!resolved) {
-                const requested = providerOpt
-                  ? `${providerOpt}/${modelOpt}`
-                  : modelOpt;
+              const slash = modelOpt.indexOf("/");
+              model = providerOpt
+                ? ctx.modelRegistry.find(providerOpt, modelOpt)
+                : slash > 0
+                  ? ctx.modelRegistry.find(
+                      modelOpt.slice(0, slash),
+                      modelOpt.slice(slash + 1),
+                    )
+                  : ctx.modelRegistry
+                      .getAll()
+                      .find((candidate) => candidate.id === modelOpt);
+              if (!model)
                 return fail(
-                  `agent "${label}": unknown model "${requested}" (use provider/id)`,
+                  `agent "${label}": unknown model "${providerOpt ? `${providerOpt}/` : ""}${modelOpt}" (use provider/id)`,
                 );
-              }
-              model = resolved;
             }
             record.model = model?.id;
             record.contextWindow = model?.contextWindow;
-            emit();
 
-            // Effort → thinking level; default inherits the parent session.
-            let thinkingLevel: ThinkingLevel = pi.getThinkingLevel();
-            if (opts.effort !== undefined) {
-              const effort = String(opts.effort);
-              if (!(THINKING_LEVELS as readonly string[]).includes(effort)) {
-                return fail(
-                  `agent "${label}": invalid effort "${effort}" (use ${THINKING_LEVELS.join("|")})`,
-                );
-              }
-              thinkingLevel = effort as ThinkingLevel;
-            }
+            const effort =
+              opts.effort === undefined ? undefined : String(opts.effort);
+            if (
+              effort &&
+              !(THINKING_LEVELS as readonly string[]).includes(effort)
+            )
+              return fail(
+                `agent "${label}": invalid effort "${effort}" (use ${THINKING_LEVELS.join("|")})`,
+              );
+            const thinking = effort ?? pi.getThinkingLevel();
 
-            const resources = await getResources(opts.schema !== undefined);
-            const outcome = await runAgent({
-              prompt,
-              schema: opts.schema,
-              model,
-              thinkingLevel,
-              cwd: ctx.cwd,
-              loader: resources.loader,
-              settingsManager: resources.settingsManager,
-              modelRegistry: ctx.modelRegistry,
-              signal: runSignal,
-              onProgress: (progress) => {
-                record.preview = progress.preview.slice(0, PREVIEW_LENGTH);
-                record.usage = progress.usage;
-                record.model = progress.model ?? record.model;
-                record.contextWindow =
-                  progress.contextWindow ?? record.contextWindow;
-                record.transcript = progress.transcript;
-                emit();
-              },
-            });
-
-            record.usage = outcome.usage;
-            record.model = outcome.model ?? record.model;
-            record.contextWindow =
-              outcome.contextWindow ?? record.contextWindow;
-            record.transcript = outcome.transcript;
-            record.preview = (outcome.output || record.preview).slice(
-              0,
-              PREVIEW_LENGTH,
+            const remainingMs = controller.remainingMs();
+            if (remainingMs < 1) throw new Error("Workflow deadline exceeded");
+            const spawn = await rpc.request(
+              "spawn",
+              buildWorkflowSpawnParams({
+                prompt,
+                schema: opts.schema,
+                cwd: ctx.cwd,
+                timeoutMs: remainingMs,
+                ...(model ? { model: `${model.provider}/${model.id}` } : {}),
+                ...(thinking ? { thinking } : {}),
+              }),
+              runSignal,
+              Math.min(10_000, remainingMs),
             );
-            record.finishedAt = Date.now();
-            record.state = outcome.ok ? "done" : "error";
-            if (outcome.ok) {
-              delete record.error;
-            } else {
-              record.error = outcome.error ?? "Agent failed";
-            }
+            const asyncId = spawn?.details?.asyncId;
+            if (!asyncId)
+              throw new Error("pi-subagents RPC spawn returned no asyncId");
+            ownedRuns.add(asyncId);
+            record.asyncId = asyncId;
+            record.asyncDir = spawn?.details?.asyncDir;
             emit();
+            const stop = () =>
+              void rpc
+                .request("stop", { id: asyncId }, undefined, 5_000)
+                .catch(() => {});
+            runSignal.addEventListener("abort", stop, { once: true });
 
+            let terminal: RpcLifecycle | undefined;
+            try {
+              while (!terminal) {
+                if (runSignal.aborted) throw runSignal.reason;
+                const status = await rpc.request(
+                  "status",
+                  { id: asyncId },
+                  runSignal,
+                  Math.max(1, Math.min(5_000, controller.remainingMs())),
+                );
+                if (status?.lifecycle?.result) terminal = status.lifecycle;
+                else
+                  await new Promise<void>((resolve, reject) => {
+                    const abort = () => {
+                      clearTimeout(timer);
+                      reject(runSignal.reason);
+                    };
+                    const timer = setTimeout(() => {
+                      runSignal.removeEventListener("abort", abort);
+                      resolve();
+                    }, 200);
+                    runSignal.addEventListener("abort", abort, { once: true });
+                  });
+              }
+            } finally {
+              runSignal.removeEventListener("abort", stop);
+              if (terminal) ownedRuns.delete(asyncId);
+            }
+
+            const result = terminal.result?.results?.[0];
+            if (!result)
+              throw new Error("pi-subagents completed without a child result");
+            const output =
+              typeof result.output === "string" ? result.output : "";
+            const ok = result.success === true;
+            record.model =
+              typeof result.model === "string" ? result.model : record.model;
+            record.preview = output.slice(0, PREVIEW_LENGTH);
+            if (result.totalCost) {
+              record.usage = {
+                input: result.totalCost.inputTokens ?? 0,
+                output: result.totalCost.outputTokens ?? 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                cost: result.totalCost.costUsd ?? 0,
+                turns: 0,
+              };
+            }
+            record.finishedAt = Date.now();
+            record.state = ok ? "done" : "error";
+            record.error = ok
+              ? undefined
+              : typeof result.error === "string"
+                ? result.error
+                : "Agent failed";
+            emit();
             return {
-              ok: outcome.ok,
-              output: outcome.output,
-              ...(outcome.structured !== undefined
-                ? { structured: outcome.structured }
+              ok,
+              output,
+              ...(result.structuredOutput !== undefined
+                ? { structured: result.structuredOutput }
                 : {}),
-              ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+              ...(!ok ? { error: record.error } : {}),
             };
           }, invocationSignal)
           .catch((error) => fail(errorText(error)));
@@ -622,6 +698,7 @@ export default function workflows(pi: ExtensionAPI) {
       const runScript = async () => {
         let status: WorkflowDetails["status"] = "completed";
         try {
+          await rpc.negotiate(ctx.cwd, controller.signal);
           details.result = await runWorkflowSandbox({
             source: prepared.source,
             args,
@@ -639,6 +716,16 @@ export default function workflows(pi: ExtensionAPI) {
         const settled = await controller.settle({
           abort: status !== "completed",
         });
+        if (status !== "completed" || !settled) await stopOwned();
+        // A spawn request can outlive its caller. Do not finalize or release
+        // the writer lease until any late async ID is stopped and terminal.
+        await rpc.waitForPendingSpawns();
+        if (ownedRuns.size) {
+          status = "failed";
+          details.error = details.error
+            ? `${details.error}; could not confirm ${ownedRuns.size} owned run(s) stopped`
+            : `Could not confirm ${ownedRuns.size} owned run(s) stopped`;
+        }
         if (!settled) {
           status = "failed";
           details.error = details.error
@@ -662,6 +749,9 @@ export default function workflows(pi: ExtensionAPI) {
           throw new Error(details.error);
         } finally {
           flushNow();
+          // Fail closed: an unconfirmed child keeps the cross-process lease
+          // until this process exits and stale ownership can be reclaimed.
+          if (ownedRuns.size === 0) writerLease.release();
         }
       };
 

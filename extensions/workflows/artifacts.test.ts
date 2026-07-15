@@ -10,6 +10,7 @@ import {
 } from "./artifacts.ts";
 import {
   emptyUsage,
+  RPC_TRANSCRIPT_UNAVAILABLE,
   type TranscriptEntry,
   type WorkflowDetails,
 } from "./model.ts";
@@ -89,16 +90,18 @@ test("live artifact persistence includes current agents and transcripts", () => 
     ) as WorkflowDetails;
     const transcripts = JSON.parse(
       readFileSync(join(directory, "transcripts.json"), "utf8"),
-    ) as Record<string, TranscriptEntry[]>;
+    ) as Record<string, TranscriptEntry[] | string>;
+    const agentTranscript = transcripts["1"] as TranscriptEntry[];
+    assert.equal(transcripts._notice, RPC_TRANSCRIPT_UNAVAILABLE);
     assert.equal(workflow.agents.length, 1);
     assert.equal(workflow.agents[0]?.label, "running-fixture");
-    assert.equal(transcripts["1"]?.[0]?.text, "current prompt");
+    assert.equal(agentTranscript[0]?.text, "current prompt");
     assert.deepEqual(
       {
-        toolCallId: transcripts["1"]?.[1]?.toolCallId,
-        startedAt: transcripts["1"]?.[1]?.startedAt,
-        finishedAt: transcripts["1"]?.[1]?.finishedAt,
-        durationMs: transcripts["1"]?.[1]?.durationMs,
+        toolCallId: agentTranscript[1]?.toolCallId,
+        startedAt: agentTranscript[1]?.startedAt,
+        finishedAt: agentTranscript[1]?.finishedAt,
+        durationMs: agentTranscript[1]?.durationMs,
       },
       {
         toolCallId: "call-fixture",

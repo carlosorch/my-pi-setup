@@ -27,16 +27,13 @@ function collectTsFiles(dir: string): string[] {
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
-	const declared = new Set([
-		...Object.keys(packageJson.dependencies ?? {}),
-		...Object.keys(packageJson.devDependencies ?? {}),
-	]);
+	const declared = new Set([...Object.keys(packageJson.dependencies ?? {}), ...Object.keys(packageJson.devDependencies ?? {})]);
 	const imported = new Set<string>();
 
 	for (const file of [...collectTsFiles(path.join(projectRoot, "src")), ...collectTsFiles(path.join(projectRoot, "test"))]) {
 		const source = fs.readFileSync(file, "utf-8");
 		for (const match of source.matchAll(sourceImportPattern)) {
-			imported.add(match[1] ?? match[2]!);
+			imported.add((match[1] ?? match[2]!).split("/").slice(0, 2).join("/"));
 		}
 	}
 

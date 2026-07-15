@@ -15,6 +15,8 @@ export type Theme = ExtensionContext["ui"]["theme"];
 
 export const RESULT_JSON_MAX_BYTES = 24 * 1024;
 export const RESULT_JSON_MAX_LINES = 600;
+export const RPC_TRANSCRIPT_UNAVAILABLE =
+  "Per-agent transcripts are unavailable for RPC-backed workflow runs.";
 
 export interface AgentUsage {
   input: number;
@@ -73,6 +75,9 @@ export interface AgentRecord {
   error?: string;
   preview: string;
   usage: AgentUsage;
+  /** Exact pi-subagents async run ownership. */
+  asyncId?: string;
+  asyncDir?: string;
   /** Normalized, serializable subagent conversation shown by /workflows. */
   transcript: TranscriptEntry[];
 }
@@ -86,6 +91,8 @@ export interface WorkflowDetails {
   background: boolean;
   status: WorkflowStatus;
   startedAt: number;
+  deadlineAt?: number;
+  timeoutMs?: number;
   finishedAt?: number;
   phases: { title: string; detail?: string }[];
   currentPhase?: string;

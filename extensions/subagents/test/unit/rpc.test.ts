@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -23,7 +24,10 @@ class FakeEvents {
 		this.handlers.set(event, list);
 		return () => {
 			const current = this.handlers.get(event) ?? [];
-			this.handlers.set(event, current.filter((candidate) => candidate !== handler));
+			this.handlers.set(
+				event,
+				current.filter((candidate) => candidate !== handler),
+			);
 		};
 	}
 
@@ -74,7 +78,11 @@ describe("subagent extension RPC bridge", () => {
 
 		const readyPromise = once(events, SUBAGENT_RPC_READY_EVENT);
 		bridge.emitReady(ctx());
-		const ready = await readyPromise as { version?: number; events?: { request?: string }; session?: { cwd?: string } };
+		const ready = (await readyPromise) as {
+			version?: number;
+			events?: { request?: string };
+			session?: { cwd?: string };
+		};
 		assert.equal(ready.version, SUBAGENT_RPC_PROTOCOL_VERSION);
 		assert.equal(ready.events?.request, SUBAGENT_RPC_REQUEST_EVENT);
 		assert.equal(ready.session?.cwd, "/repo");
@@ -107,7 +115,10 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(reply.success, false);
 		assert.equal(reply.requestId, "unknown");
 		assert.equal((reply as { error: { code: string } }).error.code, "invalid_request");
-		assert.equal(events.emitted.some((entry) => entry.event === subagentRpcReplyEvent(unsafeRequestId)), false);
+		assert.equal(
+			events.emitted.some((entry) => entry.event === subagentRpcReplyEvent(unsafeRequestId)),
+			false,
+		);
 
 		bridge.dispose();
 	});
@@ -120,7 +131,10 @@ describe("subagent extension RPC bridge", () => {
 			getContext: () => ctx(),
 			execute: async (_id, params) => {
 				executedParams = params;
-				return { content: [{ type: "text", text: "Run: abc123" }], details: { mode: "management", results: [] } } as any;
+				return {
+					content: [{ type: "text", text: "Run: abc123" }],
+					details: { mode: "management", results: [] },
+				} as any;
 			},
 		});
 
@@ -130,6 +144,94 @@ describe("subagent extension RPC bridge", () => {
 		assert.deepEqual(executedParams, { action: "status", id: "abc123" });
 		assert.equal((reply as { data: { text?: string } }).data.text, "Run: abc123");
 
+		bridge.dispose();
+	});
+
+	it("adds typed lifecycle data for exact completed status", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-rpc-status-"));
+		const asyncDirRoot = path.join(root, "async");
+		const resultsDir = path.join(root, "results");
+		fs.mkdirSync(asyncDirRoot);
+		fs.mkdirSync(resultsDir);
+		fs.writeFileSync(
+			path.join(resultsDir, "run-1.json"),
+			JSON.stringify({
+				runId: "run-1",
+				sessionId: "session-123",
+				state: "complete",
+				success: true,
+				results: [
+					{
+						agent: "worker",
+						success: true,
+						output: "done",
+						structuredOutput: { ok: true },
+					},
+				],
+			}),
+		);
+		const events = new FakeEvents();
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			asyncDirRoot,
+			resultsDir,
+			execute: async () =>
+				({
+					content: [{ type: "text", text: "complete" }],
+					details: { mode: "management", results: [] },
+				}) as any,
+		});
+
+		const reply = await request(events, "status-lifecycle", "status", {
+			id: "run-1",
+		});
+		assert.equal(reply.success, true);
+		const lifecycle = (
+			reply as {
+				data: {
+					lifecycle?: {
+						state?: string;
+						result?: { results?: Array<{ output?: string }> };
+					};
+				};
+			}
+		).data.lifecycle;
+		assert.equal(lifecycle?.state, "complete");
+		assert.equal(lifecycle?.result?.results?.[0]?.output, "done");
+		bridge.dispose();
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it("returns cached typed lifecycle after the result watcher deletes its artifact", async () => {
+		const events = new FakeEvents();
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async () => assert.fail("cached completion should bypass status artifact lookup"),
+		});
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "async-owned",
+			runId: "run-owned",
+			sessionId: "session-123",
+			state: "complete",
+			asyncDir: "/deleted/async-owned",
+			success: true,
+			results: [{ agent: "worker", success: true, output: "cached done" }],
+		});
+
+		const reply = await request(events, "status-cached", "status", {
+			id: "async-owned",
+		});
+		assert.equal(reply.success, true);
+		const lifecycle = (
+			reply as {
+				data: {
+					lifecycle?: { result?: { results?: Array<{ output?: string }> } };
+				};
+			}
+		).data.lifecycle;
+		assert.equal(lifecycle?.result?.results?.[0]?.output, "cached done");
 		bridge.dispose();
 	});
 
@@ -143,12 +245,20 @@ describe("subagent extension RPC bridge", () => {
 				executedParams = params;
 				return {
 					content: [{ type: "text", text: "Async: worker [run-1]" }],
-					details: { mode: "single", results: [], asyncId: "run-1", asyncDir: "/tmp/run-1" },
+					details: {
+						mode: "single",
+						results: [],
+						asyncId: "run-1",
+						asyncDir: "/tmp/run-1",
+					},
 				} as any;
 			},
 		});
 
-		const reply = await request(events, "spawn-1", "spawn", { agent: "worker", task: "Do work" });
+		const reply = await request(events, "spawn-1", "spawn", {
+			agent: "worker",
+			task: "Do work",
+		});
 
 		assert.equal(reply.success, true);
 		assert.equal(executedParams.agent, "worker");
@@ -170,7 +280,12 @@ describe("subagent extension RPC bridge", () => {
 				executedParams = params;
 				return {
 					content: [{ type: "text", text: "Async: worker [run-1]" }],
-					details: { mode: "chain", results: [], asyncId: "run-1", asyncDir: "/tmp/run-1" },
+					details: {
+						mode: "chain",
+						results: [],
+						asyncId: "run-1",
+						asyncDir: "/tmp/run-1",
+					},
 				} as any;
 			},
 		});
@@ -193,12 +308,21 @@ describe("subagent extension RPC bridge", () => {
 			getContext: () => ctx(),
 			execute: async () => {
 				executeCalls++;
-				return { content: [{ type: "text", text: "unexpected" }], details: { mode: "single", results: [] } } as any;
+				return {
+					content: [{ type: "text", text: "unexpected" }],
+					details: { mode: "single", results: [] },
+				} as any;
 			},
 		});
 
-		const foreground = await request(events, "spawn-foreground", "spawn", { agent: "worker", task: "Do work", async: false });
-		const management = await request(events, "spawn-management", "spawn", { action: "list" });
+		const foreground = await request(events, "spawn-foreground", "spawn", {
+			agent: "worker",
+			task: "Do work",
+			async: false,
+		});
+		const management = await request(events, "spawn-management", "spawn", {
+			action: "list",
+		});
 
 		assert.equal(foreground.success, false);
 		assert.equal((foreground as { error: { code: string; message: string } }).error.code, "invalid_params");
@@ -218,11 +342,16 @@ describe("subagent extension RPC bridge", () => {
 			getContext: () => ctx(),
 			execute: async (_id, params) => {
 				executedParams = params;
-				return { content: [{ type: "text", text: "Interrupt requested for async run abc123." }], details: { mode: "management", results: [] } } as any;
+				return {
+					content: [{ type: "text", text: "Interrupt requested for async run abc123." }],
+					details: { mode: "management", results: [] },
+				} as any;
 			},
 		});
 
-		const reply = await request(events, "interrupt-1", "interrupt", { id: "abc123" });
+		const reply = await request(events, "interrupt-1", "interrupt", {
+			id: "abc123",
+		});
 
 		assert.equal(reply.success, true);
 		assert.deepEqual(executedParams, { action: "interrupt", id: "abc123" });
@@ -238,16 +367,24 @@ describe("subagent extension RPC bridge", () => {
 			const resultsDir = path.join(root, "results");
 			const asyncDir = path.join(asyncRoot, "run-stop");
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-stop",
-				sessionId: "session-123",
-				mode: "single",
-				state: "running",
-				pid: 4242,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-stop",
+						sessionId: "session-123",
+						mode: "single",
+						state: "running",
+						pid: 4242,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const bridge = registerSubagentRpcBridge({
 				events,
 				getContext: () => ctx(),
@@ -280,16 +417,24 @@ describe("subagent extension RPC bridge", () => {
 			const asyncDir = path.join(asyncRoot, "run-other-session");
 			let killCalls = 0;
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId: "run-other-session",
-				sessionId: "other-session",
-				mode: "single",
-				state: "running",
-				pid: 4242,
-				startedAt: 100,
-				lastUpdate: 100,
-				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(asyncDir, "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-other-session",
+						sessionId: "other-session",
+						mode: "single",
+						state: "running",
+						pid: 4242,
+						startedAt: 100,
+						lastUpdate: 100,
+						steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 			const bridge = registerSubagentRpcBridge({
 				events,
 				getContext: () => ctx(),
@@ -303,7 +448,9 @@ describe("subagent extension RPC bridge", () => {
 				now: () => 150,
 			});
 
-			const reply = await request(events, "stop-other-session", "stop", { id: "run-other-session" });
+			const reply = await request(events, "stop-other-session", "stop", {
+				id: "run-other-session",
+			});
 
 			assert.equal(reply.success, false);
 			assert.equal((reply as { error: { code: string; message: string } }).error.code, "not_found");

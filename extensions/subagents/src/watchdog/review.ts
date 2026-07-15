@@ -1,6 +1,7 @@
 import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { streamSimple, type Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { Type, type Static } from "typebox";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
@@ -18,14 +19,17 @@ import {
 
 const WATCHDOG_ALLOWED_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "watchdog_warn"]);
 
-const WatchdogWarnParams = Type.Object({
-	severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
-	summary: Type.String({ description: "One concise sentence naming the issue." }),
-	evidence: Type.String({ description: "Specific evidence from the turn delta or inspected files." }),
-	recommendedAction: Type.String({ description: "Specific action the parent should take before accepting or continuing." }),
-	category: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CATEGORIES })),
-	confidence: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CONFIDENCES })),
-}, { additionalProperties: false });
+const WatchdogWarnParams = Type.Object(
+	{
+		severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
+		summary: Type.String({ description: "One concise sentence naming the issue." }),
+		evidence: Type.String({ description: "Specific evidence from the turn delta or inspected files." }),
+		recommendedAction: Type.String({ description: "Specific action the parent should take before accepting or continuing." }),
+		category: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CATEGORIES })),
+		confidence: Type.Optional(Type.String({ enum: WATCHDOG_WARNING_CONFIDENCES })),
+	},
+	{ additionalProperties: false },
+);
 
 type WatchdogWarnParams = Static<typeof WatchdogWarnParams>;
 
@@ -70,7 +74,7 @@ function assertThinkingLevel(value: string, source: string): ThinkingLevel {
 function contextThinkingLevel(ctx: ExtensionContext, currentThinkingLevel: ThinkingLevel | undefined): ThinkingLevel | undefined {
 	if (currentThinkingLevel) return currentThinkingLevel;
 	const value = (ctx as { thinkingLevel?: unknown }).thinkingLevel;
-	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value) ? value as ThinkingLevel : undefined;
+	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value) ? (value as ThinkingLevel) : undefined;
 }
 
 function resolveReviewThinking(input: {
@@ -95,7 +99,9 @@ function resolveConfiguredModel(ctx: ExtensionContext, rawModel: string): { mode
 	const { baseModel } = splitKnownThinkingSuffix(resolved);
 	const named = splitProviderModel(baseModel);
 	if (!named) {
-		throw new Error(`Configured watchdog model '${rawModel}' did not match exactly one authenticated available model. Use provider/model or configure credentials for the intended provider.`);
+		throw new Error(
+			`Configured watchdog model '${rawModel}' did not match exactly one authenticated available model. Use provider/model or configure credentials for the intended provider.`,
+		);
 	}
 
 	const model = ctx.modelRegistry.find(named.provider, named.id);
@@ -188,12 +194,12 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 			const warning = toWatchdogWarning(params);
 			const accepted = request.emitWarning(warning);
 			return {
-				content: [{
-					type: "text",
-					text: accepted
-						? "Watchdog warning recorded."
-						: "Watchdog warning was ignored by the runtime guard because it was stale, duplicate, or over budget.",
-				}],
+				content: [
+					{
+						type: "text",
+						text: accepted ? "Watchdog warning recorded." : "Watchdog warning was ignored by the runtime guard because it was stale, duplicate, or over budget.",
+					},
+				],
 				details: { accepted },
 			};
 		},
@@ -252,12 +258,13 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		if (ctx.signal?.aborted || request.signal?.aborted) return { stopReason: "aborted" };
 		const auth = selection.auth;
 		const baseStreamFn = options.streamFn ?? streamSimple;
-		const streamFn: StreamFn = (model, context, streamOptions) => baseStreamFn(model, context, {
-			...streamOptions,
-			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-			env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-			headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
-		});
+		const streamFn: StreamFn = (model, context, streamOptions) =>
+			baseStreamFn(model, context, {
+				...streamOptions,
+				...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+				env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
+				headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+			});
 		const tools = [
 			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn"),
 			createWatchdogWarnTool(request),
@@ -271,10 +278,9 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 			},
 			convertToLlm,
 			streamFn,
-			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
-			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
-				? undefined
-				: { block: true, reason: `Watchdog reviews are read-only; tool '${toolCall.name}' is not allowed.` },
+			getApiKey: (providerName) => (providerName === selection.model.provider ? auth.apiKey : undefined),
+			beforeToolCall: async ({ toolCall }) =>
+				WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name) ? undefined : { block: true, reason: `Watchdog reviews are read-only; tool '${toolCall.name}' is not allowed.` },
 			toolExecution: "sequential",
 		});
 		const abort = () => agent.abort();

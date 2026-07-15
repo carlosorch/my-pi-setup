@@ -27,9 +27,9 @@ reference/
 
 Ben's original `extensions/subagents` implementation is retained under `reference/davis-subagents` so it does not conflict with the active `extensions/subagents` package.
 
-## Integration direction
+## Integration
 
-`pi-subagents` remains the execution authority. The integration will connect Ben's workflow and UI work to its existing RPC and lifecycle machinery:
+`pi-subagents` remains the execution authority. The workflow and takeover UI use its RPC and lifecycle machinery:
 
 ```text
 Sandboxed workflow DSL
@@ -44,24 +44,33 @@ Agents · chains · worktrees · deadlines · artifacts · recovery
 Takeover UI (primary) ── Classic UI (fallback)
 ```
 
-Planned behavior:
+The installable package loads only:
 
-- Dispatch workflow `agent()`, `parallel()`, and `phase()` operations through `subagents:rpc:v1`.
-- Apply one absolute deadline to the workflow and every child run.
-- Allow one writer by default; require isolated worktrees for concurrent writers.
-- Use the takeover dashboard as the primary UI while retaining the classic UI as a configurable and automatic fallback.
-- Add a native Codex harness only if OpenAI exposes useful Codex functionality unavailable through Pi providers.
+- `extensions/subagents/src/extension/index.ts`
+- `extensions/workflows/index.ts`
+- the packaged subagent skills and prompts
+
+The other Davis extensions and themes remain source references and are not loaded by this package.
 
 ## Installation and setup
 
-See [`SETUP.md`](./SETUP.md) for the personal Pi setup and [`extensions/subagents/README.md`](./extensions/subagents/README.md) for subagent package usage.
+Install a pinned release so later upstream changes cannot alter the active Pi unexpectedly:
 
-Use `pnpm` for dependency management:
+```bash
+pi install git:github.com/carlosorch/my-pi-setup@setup-v0.1.0
+```
+
+Move to a later pinned release by installing its new tag. To roll back, reinstall the previous tag. Do not keep `npm:pi-subagents` enabled at the same time because both packages register the same subagent extension.
+
+For repository development:
 
 ```bash
 pnpm install
-pnpm -r test
+pnpm test
+pnpm run test:subagents
 ```
+
+See [`SETUP.md`](./SETUP.md) for the personal Pi setup and [`extensions/subagents/README.md`](./extensions/subagents/README.md) for subagent usage.
 
 ## Upstreams
 

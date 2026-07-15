@@ -17,7 +17,17 @@ type AsyncStep = AsyncRunSummary["steps"][number];
 
 export type FleetItem =
 	| { key: string; kind: "foreground-active"; runId: string; index?: number; agent: string; state: "running"; updatedAt: number; control: ForegroundControl }
-	| { key: string; kind: "foreground-recent"; runId: string; index: number; agent: string; state: ForegroundResumeChild["status"]; updatedAt: number; run: ForegroundResumeRun; child: ForegroundResumeChild }
+	| {
+			key: string;
+			kind: "foreground-recent";
+			runId: string;
+			index: number;
+			agent: string;
+			state: ForegroundResumeChild["status"];
+			updatedAt: number;
+			run: ForegroundResumeRun;
+			child: ForegroundResumeChild;
+	  }
 	| { key: string; kind: "async"; runId: string; index?: number; agent: string; state: string; updatedAt: number; run: AsyncRunSummary; step?: AsyncStep };
 
 export interface FleetSnapshot {
@@ -44,7 +54,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 		...(job.currentStep !== undefined ? { currentStep: job.currentStep } : {}),
 		...(job.chainStepCount !== undefined ? { chainStepCount: job.chainStepCount } : {}),
 		...(job.parallelGroups?.length ? { parallelGroups: job.parallelGroups } : {}),
-		steps: (job.steps ?? job.agents?.map((agent) => ({ agent, status: job.status === "queued" ? "pending" as const : job.status })) ?? []).map((step, index) => ({
+		steps: (job.steps ?? job.agents?.map((agent) => ({ agent, status: job.status === "queued" ? ("pending" as const) : job.status })) ?? []).map((step, index) => ({
 			...step,
 			index: step.index ?? index,
 		})),
@@ -73,10 +83,7 @@ function asyncItems(run: AsyncRunSummary): FleetItem[] {
 	}));
 }
 
-export function collectFleetSnapshot(
-	state: SubagentState,
-	options: { asyncDirRoot?: string; resultsDir?: string; limit?: number } = {},
-): FleetSnapshot {
+export function collectFleetSnapshot(state: SubagentState, options: { asyncDirRoot?: string; resultsDir?: string; limit?: number } = {}): FleetSnapshot {
 	const items: FleetItem[] = [];
 	const activeForegroundIds = new Set<string>();
 	for (const control of [...state.foregroundControls.values()].sort((left, right) => right.updatedAt - left.updatedAt)) {
@@ -104,11 +111,13 @@ export function collectFleetSnapshot(
 				reconcile: false,
 			});
 		} else {
-			const tracked = [...(state.fleetJobs ?? state.asyncJobs).values()]
-				.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
+			const tracked = [...(state.fleetJobs ?? state.asyncJobs).values()].filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
 			const byUpdate = (left: AsyncJobState, right: AsyncJobState) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
 			const active = tracked.filter((job) => job.status === "queued" || job.status === "running").sort(byUpdate);
-			const recent = tracked.filter((job) => job.status !== "queued" && job.status !== "running").sort(byUpdate).slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
+			const recent = tracked
+				.filter((job) => job.status !== "queued" && job.status !== "running")
+				.sort(byUpdate)
+				.slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
 			runs = [];
 			for (const job of [...active, ...recent]) {
 				try {
@@ -191,7 +200,10 @@ function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-rec
 		"",
 		"Result transcript tail",
 	];
-	const outputLines = (child.finalOutput ?? "").split(/\r?\n/).filter((line) => line.trim()).slice(-TRANSCRIPT_LINES);
+	const outputLines = (child.finalOutput ?? "")
+		.split(/\r?\n/)
+		.filter((line) => line.trim())
+		.slice(-TRANSCRIPT_LINES);
 	lines.push(...(outputLines.length ? outputLines : ["(no recovered output available)"]));
 	return lines.filter((line): line is string => line !== undefined);
 }
@@ -216,13 +228,14 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 	].filter((line): line is string => line !== undefined);
 }
 
-function detailLines(item: FleetItem | undefined, error: string | undefined): string[] {
-	if (!item) return [error ? `Fleet scan failed: ${error}` : "No current-session foreground or recent async children.", "", "New runs appear here automatically while this inspector remains open."];
-	const lines = item.kind === "foreground-active"
-		? foregroundActiveDetail(item)
-		: item.kind === "foreground-recent"
-			? foregroundRecentDetail(item)
-			: asyncDetail(item);
+export function fleetDetailLines(item: FleetItem | undefined, error?: string): string[] {
+	if (!item)
+		return [
+			error ? `Fleet scan failed: ${error}` : "No current-session foreground or recent async children.",
+			"",
+			"New runs appear here automatically while this inspector remains open.",
+		];
+	const lines = item.kind === "foreground-active" ? foregroundActiveDetail(item) : item.kind === "foreground-recent" ? foregroundRecentDetail(item) : asyncDetail(item);
 	if (error) lines.unshift(`Fleet scan warning: ${error}`, "");
 	return lines;
 }
@@ -254,13 +267,7 @@ export class SubagentFleetComponent implements Component {
 	private readonly done: (result: undefined) => void;
 	private readonly options: { asyncDirRoot?: string; resultsDir?: string; refreshMs?: number };
 
-	constructor(
-		tui: TUI,
-		theme: Theme,
-		state: SubagentState,
-		done: (result: undefined) => void,
-		options: { asyncDirRoot?: string; resultsDir?: string; refreshMs?: number } = {},
-	) {
+	constructor(tui: TUI, theme: Theme, state: SubagentState, done: (result: undefined) => void, options: { asyncDirRoot?: string; resultsDir?: string; refreshMs?: number } = {}) {
 		this.tui = tui;
 		this.theme = theme;
 		this.state = state;
@@ -334,7 +341,7 @@ export class SubagentFleetComponent implements Component {
 
 	private wrappedDetail(width: number): string[] {
 		const selected = this.snapshot.items[this.selected];
-		const raw = detailLines(selected, this.snapshot.error);
+		const raw = fleetDetailLines(selected, this.snapshot.error);
 		const lines: string[] = [];
 		for (const line of raw) {
 			const styled = /^(Run|State|Mode|Source|Child|Agent):/.test(line)
@@ -365,15 +372,19 @@ export class SubagentFleetComponent implements Component {
 		else if (this.detailScroll > maxDetailScroll) this.detailScroll = maxDetailScroll;
 		const visibleDetails = details.slice(this.detailScroll, this.detailScroll + this.bodyHeight);
 		const lines = [this.theme.fg("border", `╭${"─".repeat(innerWidth)}╮`)];
-		lines.push(this.theme.fg("border", "│") + fit(` ${this.theme.bold("Subagent fleet")} ${this.theme.fg("dim", "· inspection only · live refresh")}`, innerWidth) + this.theme.fg("border", "│"));
+		lines.push(
+			this.theme.fg("border", "│") +
+				fit(` ${this.theme.bold("Subagent fleet")} ${this.theme.fg("dim", "· inspection only · live refresh")}`, innerWidth) +
+				this.theme.fg("border", "│"),
+		);
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┬${"─".repeat(detailWidth)}┤`));
 		for (let index = 0; index < this.bodyHeight; index++) {
 			lines.push(
-				this.theme.fg("border", "│")
-				+ fit(roster[index] ?? "", rosterWidth)
-				+ this.theme.fg("border", "│")
-				+ fit(visibleDetails[index] ?? "", detailWidth)
-				+ this.theme.fg("border", "│"),
+				this.theme.fg("border", "│") +
+					fit(roster[index] ?? "", rosterWidth) +
+					this.theme.fg("border", "│") +
+					fit(visibleDetails[index] ?? "", detailWidth) +
+					this.theme.fg("border", "│"),
 			);
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
@@ -395,11 +406,8 @@ export class SubagentFleetComponent implements Component {
 }
 
 export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentState): Promise<void> {
-	await ctx.ui.custom<undefined>(
-		(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done),
-		{
-			overlay: true,
-			overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
-		},
-	);
+	await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done), {
+		overlay: true,
+		overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
+	});
 }

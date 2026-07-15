@@ -1,4 +1,8 @@
-import type { TranscriptEntry, WorkflowDetails } from "./model.ts";
+import {
+  RPC_TRANSCRIPT_UNAVAILABLE,
+  type TranscriptEntry,
+  type WorkflowDetails,
+} from "./model.ts";
 import {
   safeStringify,
   truncateUtf8,
@@ -88,12 +92,15 @@ function writeRunFile(runDir: string, name: string, content: string) {
 }
 
 export function persistWorkflowJson(runDir: string, details: WorkflowDetails) {
-  const transcripts = Object.fromEntries(
-    details.agents.map((agent) => [
-      agent.index,
-      boundedArtifactTranscript(agent.transcript),
-    ]),
-  );
+  const transcripts = {
+    _notice: RPC_TRANSCRIPT_UNAVAILABLE,
+    ...Object.fromEntries(
+      details.agents.map((agent) => [
+        agent.index,
+        boundedArtifactTranscript(agent.transcript),
+      ]),
+    ),
+  };
   writeRunFile(
     runDir,
     "transcripts.json",

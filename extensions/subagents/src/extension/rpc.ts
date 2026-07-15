@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -6,7 +7,7 @@ import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
 import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
+import { type Details, ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
@@ -17,7 +18,7 @@ export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
 export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "interrupt", "stop"] as const;
-export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
+export type SubagentRpcMethod = (typeof SUBAGENT_RPC_METHODS)[number];
 
 export interface SubagentRpcRequestEnvelope {
 	version: typeof SUBAGENT_RPC_PROTOCOL_VERSION;
@@ -30,32 +31,27 @@ export interface SubagentRpcRequestEnvelope {
 	};
 }
 
-export type SubagentRpcReplyEnvelope<T = unknown> = {
-	version: typeof SUBAGENT_RPC_PROTOCOL_VERSION;
-	requestId: string;
-	method?: SubagentRpcMethod;
-	success: true;
-	data: T;
-} | {
-	version: typeof SUBAGENT_RPC_PROTOCOL_VERSION;
-	requestId: string;
-	method?: SubagentRpcMethod;
-	success: false;
-	error: {
-		code: SubagentRpcErrorCode;
-		message: string;
-	};
-};
+export type SubagentRpcReplyEnvelope<T = unknown> =
+	| {
+			version: typeof SUBAGENT_RPC_PROTOCOL_VERSION;
+			requestId: string;
+			method?: SubagentRpcMethod;
+			success: true;
+			data: T;
+	  }
+	| {
+			version: typeof SUBAGENT_RPC_PROTOCOL_VERSION;
+			requestId: string;
+			method?: SubagentRpcMethod;
+			success: false;
+			error: {
+				code: SubagentRpcErrorCode;
+				message: string;
+			};
+	  };
 
 type SubagentRpcErrorCode =
-	| "invalid_request"
-	| "invalid_params"
-	| "unsupported_version"
-	| "unsupported_method"
-	| "no_active_session"
-	| "execution_failed"
-	| "not_found"
-	| "invalid_state";
+	"invalid_request" | "invalid_params" | "unsupported_version" | "unsupported_method" | "no_active_session" | "execution_failed" | "not_found" | "invalid_state";
 
 interface EventBus {
 	on(event: string, handler: (data: unknown) => void): (() => void) | void;
@@ -76,6 +72,7 @@ interface RegisterSubagentRpcBridgeOptions {
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	completedRuns?: Map<string, Record<string, unknown>>;
 }
 
 class SubagentRpcError extends Error {
@@ -120,9 +117,7 @@ function assertSubagentParams(params: SubagentParamsLike, label: string): void {
 		throw new SubagentRpcError("invalid_params", `${label}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	if (subagentParamsValidator.Check(params)) return;
-	const messages = [...subagentParamsValidator.Errors(params)]
-		.slice(0, 4)
-		.map((error) => error.message);
+	const messages = [...subagentParamsValidator.Errors(params)].slice(0, 4).map((error) => error.message);
 	throw new SubagentRpcError("invalid_params", `${label}: ${messages.join("; ") || "invalid subagent parameters"}`);
 }
 
@@ -133,7 +128,11 @@ function textFromToolResult(result: AgentToolResult<Details>): string {
 		.join("\n");
 }
 
-function dataFromToolResult(result: AgentToolResult<Details>): { text: string; details?: Details; isError?: boolean } {
+function dataFromToolResult(result: AgentToolResult<Details>): {
+	text: string;
+	details?: Details;
+	isError?: boolean;
+} {
 	return {
 		text: textFromToolResult(result),
 		...(result.details ? { details: result.details } : {}),
@@ -156,7 +155,11 @@ function normalizeTargetParams(params: unknown, method: SubagentRpcMethod): Pick
 	return output;
 }
 
-function sessionData(ctx: ExtensionContext | null): { cwd?: string; sessionId?: string; sessionFile?: string | null } {
+function sessionData(ctx: ExtensionContext | null): {
+	cwd?: string;
+	sessionId?: string;
+	sessionFile?: string | null;
+} {
 	if (!ctx) return {};
 	return {
 		cwd: ctx.cwd,
@@ -212,11 +215,61 @@ function spawnParams(params: unknown): SubagentParamsLike {
 	return { ...(input as SubagentParamsLike), async: true, clarify: false };
 }
 
+function lifecycleStatus(params: unknown, options: RegisterSubagentRpcBridgeOptions, ctx: ExtensionContext): Record<string, unknown> | undefined {
+	const target = normalizeTargetParams(params, "status");
+	if (!target.id && !target.runId && !target.dir) return undefined;
+	const currentSessionId = ctx.sessionManager.getSessionId();
+	const exactId = target.id ?? target.runId;
+	const completed = exactId ? options.completedRuns?.get(exactId) : undefined;
+	if (completed) {
+		if (currentSessionId && completed.sessionId === currentSessionId) {
+			return {
+				runId: exactId,
+				state: completed.state,
+				asyncDir: completed.asyncDir,
+				result: completed,
+			};
+		}
+		options.completedRuns?.delete(exactId!);
+	}
+	const location = resolveAsyncRunLocation(target, options.asyncDirRoot ?? ASYNC_DIR, options.resultsDir ?? RESULTS_DIR);
+	if (!location.asyncDir && !location.resultPath) return undefined;
+	const status = location.asyncDir
+		? reconcileAsyncRun(location.asyncDir, {
+				resultsDir: options.resultsDir ?? RESULTS_DIR,
+				kill: options.kill,
+				now: options.now,
+			}).status
+		: undefined;
+	let result: Record<string, unknown> | undefined;
+	if (location.resultPath && fs.existsSync(location.resultPath)) {
+		const parsed: unknown = JSON.parse(fs.readFileSync(location.resultPath, "utf8"));
+		if (!isRecord(parsed)) throw new SubagentRpcError("execution_failed", "Async result artifact is not an object.");
+		result = parsed;
+	}
+	const sessionId = status?.sessionId ?? (typeof result?.sessionId === "string" ? result.sessionId : undefined);
+	if (!currentSessionId || sessionId !== currentSessionId) {
+		throw new SubagentRpcError("not_found", "Async run was not found in the active session.");
+	}
+	return {
+		runId: status?.runId ?? location.resolvedId,
+		state: status?.state ?? result?.state,
+		asyncDir: location.asyncDir,
+		...(result ? { result } : {}),
+	};
+}
+
 function stopAsyncRun(
 	params: unknown,
 	options: RegisterSubagentRpcBridgeOptions,
 	ctx: ExtensionContext,
-): { runId: string; asyncDir: string; previousState: string; state: "stopping"; message: string } {
+): {
+	runId: string;
+	asyncDir: string;
+	previousState: string;
+	state: "stopping";
+	message: string;
+} {
 	const target = normalizeTargetParams(params, "stop");
 	assertSubagentParams({ action: "status", ...target }, "RPC stop target params");
 	const asyncDirRoot = options.asyncDirRoot ?? ASYNC_DIR;
@@ -241,7 +294,11 @@ function stopAsyncRun(
 
 	let status;
 	try {
-		status = reconcileAsyncRun(location.asyncDir, { resultsDir, kill: options.kill, now: options.now }).status;
+		status = reconcileAsyncRun(location.asyncDir, {
+			resultsDir,
+			kill: options.kill,
+			now: options.now,
+		}).status;
 	} catch (error) {
 		throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
 	}
@@ -275,10 +332,7 @@ function stopAsyncRun(
 	};
 }
 
-async function handleRequest(
-	request: SubagentRpcRequestEnvelope,
-	options: RegisterSubagentRpcBridgeOptions,
-): Promise<unknown> {
+async function handleRequest(request: SubagentRpcRequestEnvelope, options: RegisterSubagentRpcBridgeOptions): Promise<unknown> {
 	const ctx = options.getContext();
 	if (request.method === "ping") return pingData(ctx);
 	if (!ctx) throw new SubagentRpcError("no_active_session", "No active extension context for subagent RPC.");
@@ -287,10 +341,16 @@ async function handleRequest(
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
 	}
 	if (request.method === "status") {
-		return executeChecked(options, ctx, request.requestId, request.method, { action: "status", ...normalizeTargetParams(request.params, "status") });
+		const lifecycle = lifecycleStatus(request.params, options, ctx);
+		if (lifecycle?.result) return { text: "Async run completed.", lifecycle };
+		const data = await executeChecked(options, ctx, request.requestId, request.method, { action: "status", ...normalizeTargetParams(request.params, "status") });
+		return { ...data, lifecycle };
 	}
 	if (request.method === "interrupt") {
-		return executeChecked(options, ctx, request.requestId, request.method, { action: "interrupt", ...normalizeTargetParams(request.params, "interrupt") });
+		return executeChecked(options, ctx, request.requestId, request.method, {
+			action: "interrupt",
+			...normalizeTargetParams(request.params, "interrupt"),
+		});
 	}
 	if (request.method === "stop") {
 		return stopAsyncRun(request.params, options, ctx);
@@ -319,19 +379,14 @@ function parseRequest(raw: unknown): SubagentRpcRequestEnvelope {
 function safeReplyRequestId(raw: unknown): string {
 	if (!isRecord(raw)) return "unknown";
 	const requestId = raw.requestId;
-	return typeof requestId === "string" && requestId.trim().length > 0 && !/[\r\n]/.test(requestId)
-		? requestId
-		: "unknown";
+	return typeof requestId === "string" && requestId.trim().length > 0 && !/[\r\n]/.test(requestId) ? requestId : "unknown";
 }
 
 function errorReply(raw: unknown, error: unknown): SubagentRpcReplyEnvelope {
 	const requestId = safeReplyRequestId(raw);
-	const method = isRecord(raw) && typeof raw.method === "string" && (SUBAGENT_RPC_METHODS as readonly string[]).includes(raw.method)
-		? raw.method as SubagentRpcMethod
-		: undefined;
-	const rpcError = error instanceof SubagentRpcError
-		? error
-		: new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
+	const method =
+		isRecord(raw) && typeof raw.method === "string" && (SUBAGENT_RPC_METHODS as readonly string[]).includes(raw.method) ? (raw.method as SubagentRpcMethod) : undefined;
+	const rpcError = error instanceof SubagentRpcError ? error : new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
 	return {
 		version: SUBAGENT_RPC_PROTOCOL_VERSION,
 		requestId,
@@ -348,11 +403,31 @@ export function registerSubagentRpcBridge(options: RegisterSubagentRpcBridgeOpti
 	emitReady: (ctx?: ExtensionContext | null) => void;
 	dispose: () => void;
 } {
+	const completedRuns = new Map<string, Record<string, unknown>>();
+	let cacheSessionId: string | undefined;
+	const syncCacheSession = () => {
+		const sessionId = options.getContext()?.sessionManager.getSessionId() ?? undefined;
+		if (sessionId !== cacheSessionId) completedRuns.clear();
+		cacheSessionId = sessionId;
+		return sessionId;
+	};
+	const bridgeOptions = { ...options, completedRuns };
+	const unsubscribeComplete = options.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (raw) => {
+		const sessionId = syncCacheSession();
+		if (!sessionId || !isRecord(raw) || raw.sessionId !== sessionId) return;
+		const ids = [raw.id, raw.runId].filter((value): value is string => typeof value === "string");
+		for (const id of new Set(ids)) {
+			completedRuns.delete(id);
+			completedRuns.set(id, raw);
+		}
+		while (completedRuns.size > 128) completedRuns.delete(completedRuns.keys().next().value!);
+	});
 	const unsubscribe = options.events.on(SUBAGENT_RPC_REQUEST_EVENT, async (raw) => {
 		let request: SubagentRpcRequestEnvelope | undefined;
 		try {
+			syncCacheSession();
 			request = parseRequest(raw);
-			const data = await handleRequest(request, options);
+			const data = await handleRequest(request, bridgeOptions);
 			options.events.emit(subagentRpcReplyEvent(request.requestId), {
 				version: SUBAGENT_RPC_PROTOCOL_VERSION,
 				requestId: request.requestId,
@@ -372,6 +447,8 @@ export function registerSubagentRpcBridge(options: RegisterSubagentRpcBridgeOpti
 		},
 		dispose: () => {
 			if (typeof unsubscribe === "function") unsubscribe();
+			if (typeof unsubscribeComplete === "function") unsubscribeComplete();
+			completedRuns.clear();
 		},
 	};
 }

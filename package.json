@@ -1,22 +1,54 @@
 {
+  "name": "my-pi-setup",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "workspaces": [
+    "extensions/subagents"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/subagents/src/extension/index.ts",
+      "./extensions/workflows/index.ts"
+    ],
+    "skills": [
+      "./extensions/subagents/skills"
+    ],
+    "prompts": [
+      "./extensions/subagents/prompts"
+    ]
+  },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
-    "@earendil-works/pi-tui": "^0.80.6",
-    "acorn": "^8.17.0",
-    "firecrawl": "^4.30.0",
-    "typebox": "^1.3.6"
+    "acorn": "^8.17.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.80.6",
+    "@earendil-works/pi-ai": "0.80.6",
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6",
     "@types/node": "^26.1.1",
+    "typebox": "1.3.6",
     "prettier": "^3.9.5",
     "typescript": "^7.0.2"
   },
-  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "format": "prettier --write \"extensions/**/*.{ts,cjs}\" \"*.json\"",
     "format:check": "prettier --check \"extensions/**/*.{ts,cjs}\" \"*.json\"",
-    "test": "node --test --experimental-strip-types extensions/*/*.test.ts"
+    "test": "pnpm run test:package && pnpm run test:workflows",
+    "test:package": "node --test test/*.test.mjs",
+    "test:workflows": "node --test --experimental-strip-types extensions/workflows/*.test.ts",
+    "test:subagents": "pnpm --dir extensions/subagents test",
+    "test:all": "pnpm test && pnpm run test:subagents"
   }
 }
